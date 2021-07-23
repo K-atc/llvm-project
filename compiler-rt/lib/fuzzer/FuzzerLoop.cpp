@@ -548,6 +548,12 @@ bool Fuzzer::RunOne(const uint8_t *Data, size_t Size, bool MayDeleteFile,
       FoundUniqFeaturesOfII == II->UniqFeatureSet.size() &&
       II->U.size() > Size) {
     auto OldFeaturesFile = Sha1ToString(II->Sha1);
+
+    InputInfo NewII;
+    ComputeSHA1(Data, Size, NewII.Sha1);
+    WriteEdgeToMutationGraphFile(Options.MutationGraphFile, &NewII, II,
+                                 "Reduce");
+
     Corpus.Replace(II, {Data, Data + Size});
     RenameFeatureSetFile(Options.FeaturesDir, OldFeaturesFile,
                          Sha1ToString(II->Sha1));
