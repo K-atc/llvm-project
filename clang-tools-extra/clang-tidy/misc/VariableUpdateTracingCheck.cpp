@@ -42,32 +42,91 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   //        changeTo(cat("MakeX")),
   //        cat("MkX has been renamed MakeX"));
   
-  // TODO: 変数宣言 int lhs = 1;
+  // TODO: 初期化ありの変数宣言 int lhs = 1;
   
-  // lhs = <value>;
-  auto HandleAssignment = makeRule(
+  // <DeclRefExpr> = <expr>;
+  auto HandleLvalueAssignment = makeRule(
       binaryOperator(
         hasOperatorName("="), 
         hasLHS(
           declRefExpr(
-            to(varDecl(hasTypeLoc(typeLoc().bind("lhs_type"))))
-          ).bind("lhs")
+            to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
+          ).bind("lvalue")
         )
-        // TODO: RHSの型
+        // hasRHS(
+        //   declRefExpr(
+        //     to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
+        //   ).bind("rvalue")
+        //   // TODO: 定数
+        //   // TODO: 関数呼び出しありの代入
+        // )
+      ),
+      {
+        changeTo(
+          node("lvalue"), 
+          cat(
+            "__trace_variable_update_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
+          )
+        ),
+        // changeTo(
+        //   node("rvalue"), 
+        //   cat(
+        //     "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
+        //   )
+        // ), 
+      },
+      assignment_found
+    );
+
+  // <DeclRefExpr> = <DeclRefExpr>;
+  auto HandleRvalueDeclRefExprAssignment = makeRule(
+      binaryOperator(
+        hasOperatorName("="), 
+        hasRHS(ignoringImpCasts(
+          declRefExpr(anyOf(
+            // 一時変数
+            to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+            // 関数引数
+            to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
+          )).bind("rvalue")
+        ))
       ),
       changeTo(
-        node("lhs"), 
-        cat("__trace_variable_update(", name("lhs"), ", ", name("lhs_type"), ")")
+        node("rvalue"), 
+        cat(
+          "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
+        )
       ), 
       assignment_found
     );
 
-  // TODO: 関数呼び出しありの代入・変数宣言
+  // <DeclRefExpr> = <IntegerLiteral>
+  auto HandleRvalueLiteralAssignment = makeRule(
+      binaryOperator(
+        hasOperatorName("="), 
+        hasRHS(
+          expr(integerLiteral()).bind("rvalue")
+        )
+      ),
+      changeTo(
+        node("rvalue"), 
+        cat(
+          "__trace_variable_update_rvalue(", node("rvalue"), ", ", "const int", ")"
+        )
+      ), 
+      assignment_found
+    );
+
+  // TODO: <DeclRefExpr> = <binaryOperator>
+
+  // TODO: 関数呼び出しありの代入
 
   return applyFirst({
     // HandleX,
     // HandleY,
-    HandleAssignment,
+    // HandleLvalueAssignment,
+    HandleRvalueDeclRefExprAssignment,
+    HandleRvalueLiteralAssignment,
   });
 }
 
