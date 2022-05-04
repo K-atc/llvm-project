@@ -84,7 +84,7 @@ Clang-Tidy Checks
    `bugprone-posix-return <bugprone-posix-return.html>`_, "Yes"
    `bugprone-redundant-branch-condition <bugprone-redundant-branch-condition.html>`_, "Yes"
    `bugprone-reserved-identifier <bugprone-reserved-identifier.html>`_, "Yes"
-   `bugprone-shared-ptr-array-mismatch <bugprone-shared-ptr-array-mismatch.html>`_, "Yes"
+   `bugprone-shared-ptr-array-mismatch <bugprone-shared-ptr-array-mismatch.html>`_,
    `bugprone-signal-handler <bugprone-signal-handler.html>`_,
    `bugprone-signed-char-misuse <bugprone-signed-char-misuse.html>`_,
    `bugprone-sizeof-container <bugprone-sizeof-container.html>`_,
@@ -113,7 +113,7 @@ Clang-Tidy Checks
    `bugprone-unused-return-value <bugprone-unused-return-value.html>`_,
    `bugprone-use-after-move <bugprone-use-after-move.html>`_,
    `bugprone-virtual-near-miss <bugprone-virtual-near-miss.html>`_, "Yes"
-   `cert-dcl21-cpp <cert-dcl21-cpp.html>`_, "Yes"
+   `cert-dcl21-cpp <cert-dcl21-cpp.html>`_,
    `cert-dcl50-cpp <cert-dcl50-cpp.html>`_,
    `cert-dcl58-cpp <cert-dcl58-cpp.html>`_,
    `cert-env33-c <cert-env33-c.html>`_,
@@ -228,6 +228,7 @@ Clang-Tidy Checks
    `misc-unused-alias-decls <misc-unused-alias-decls.html>`_, "Yes"
    `misc-unused-parameters <misc-unused-parameters.html>`_, "Yes"
    `misc-unused-using-decls <misc-unused-using-decls.html>`_, "Yes"
+   `misc-variable-update-tracing <misc-variable-update-tracing.html>`_, "Yes"
    `modernize-avoid-bind <modernize-avoid-bind.html>`_, "Yes"
    `modernize-avoid-c-arrays <modernize-avoid-c-arrays.html>`_,
    `modernize-concat-nested-namespaces <modernize-concat-nested-namespaces.html>`_, "Yes"

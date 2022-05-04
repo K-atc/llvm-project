@@ -113,6 +113,11 @@ New checks
 
   Finds initializations of C++ shared pointers to non-array type that are initialized with an array.
 
+- New :doc:`misc-variable-update-tracing
+  <clang-tidy/checks/misc-variable-update-tracing>` check.
+
+  FIXME: add release notes.
+
 - New :doc:`modernize-macro-to-enum
   <clang-tidy/checks/modernize-macro-to-enum>` check.
 

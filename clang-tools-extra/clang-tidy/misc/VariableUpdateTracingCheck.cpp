@@ -12,7 +12,7 @@
 #include "clang/AST/OperationKinds.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/Tooling/Transformer/RangeSelector.h"
+#include "clang/Tooling/Transformer/RangeSelector.h" // node("hoge"), name("hoge")
 #include "clang/Tooling/Transformer/RewriteRule.h"
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "llvm/ADT/StringRef.h"
@@ -29,36 +29,44 @@ using namespace ::clang::transformer;
 RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   std::cerr << "[*] VariableUpdateTracingCheckImpl" << std::endl;
 
-  auto assignment_warning =
+  auto assignment_found =
       cat("assignment found 🎉");
 
-  auto HandleX = makeRule(
-      functionDecl(hasName("bad")).bind("name"),
-      changeTo(name("name"), cat("good")),
-      cat("bad is now good")
-    );
+  // auto HandleX = makeRule(
+  //     functionDecl(hasName("bad")).bind("name"),
+  //     changeTo(name("name"), cat("good")),
+  //     cat("bad is now good")
+  //   );
 
-  auto HandleY = makeRule(declRefExpr(to(functionDecl(hasName("MkX")))),
-         changeTo(cat("MakeX")),
-         cat("MkX has been renamed MakeX"));
+  // auto HandleY = makeRule(declRefExpr(to(functionDecl(hasName("MkX")))),
+  //        changeTo(cat("MakeX")),
+  //        cat("MkX has been renamed MakeX"));
   
   // TODO: 変数宣言 int lhs = 1;
   
   // lhs = <value>;
   auto HandleAssignment = makeRule(
-      cxxOperatorCallExpr(
-        hasOverloadedOperatorName("="),
-        hasArgument(0, declRefExpr(to(decl().bind("lhs"))))
+      binaryOperator(
+        hasOperatorName("="), 
+        hasLHS(
+          declRefExpr(
+            to(varDecl(hasTypeLoc(typeLoc().bind("lhs_type"))))
+          ).bind("lhs")
+        )
+        // TODO: RHSの型
       ),
-      changeTo(node("lhs"), cat("{}")), 
-      assignment_warning
+      changeTo(
+        node("lhs"), 
+        cat("__trace_variable_update(", name("lhs"), ", ", name("lhs_type"), ")")
+      ), 
+      assignment_found
     );
 
   // TODO: 関数呼び出しありの代入・変数宣言
 
   return applyFirst({
-    HandleX,
-    HandleY,
+    // HandleX,
+    // HandleY,
     HandleAssignment,
   });
 }
