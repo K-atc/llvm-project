@@ -117,7 +117,26 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found
     );
 
-  // TODO: <DeclRefExpr> = <binaryOperator>
+  // <DeclRefExpr> = ... <DeclRefExpr> ...
+  auto HandleRvalueBinaryOperatorDeclRefExprAssignment = makeRule(
+      declRefExpr(
+        hasParent(implicitCastExpr(
+          hasParent(binaryOperator(unless(hasOperatorName("="))))
+        )),
+        to(varDecl(hasTypeLoc(typeLoc().bind("var_type"))))
+      ).bind("var"),
+      changeTo(
+        node("var"), 
+        cat(
+          "__trace_variable_update_rvalue(", name("var"), ", ", name("var_type"), ")"
+          // "__trace_variable_update_rvalue(", name("var"), ", ", "TODO", ")"
+        )
+      ), 
+      assignment_found
+    );
+
+  // TODO: <DeclRefExpr> = ... <IntegerLiteral> ...
+
 
   // TODO: 関数呼び出しありの代入
 
@@ -127,6 +146,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     // HandleLvalueAssignment,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
+    HandleRvalueBinaryOperatorDeclRefExprAssignment,
   });
 }
 
