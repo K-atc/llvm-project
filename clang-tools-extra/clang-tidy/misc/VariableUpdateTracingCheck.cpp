@@ -43,45 +43,25 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   //        cat("MkX has been renamed MakeX"));
   
   // TODO: 初期化ありの変数宣言 int lhs = 1;
-  
-  // <DeclRefExpr> = <expr>;
-  auto HandleLvalueAssignment = makeRule(
-      binaryOperator(
-        hasOperatorName("="), 
-        hasLHS(
-          declRefExpr(
-            to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
-          ).bind("lvalue")
-        )
-        // hasRHS(
-        //   declRefExpr(
-        //     to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-        //   ).bind("rvalue")
-        //   // TODO: 定数
-        //   // TODO: 関数呼び出しありの代入
-        // )
-      ),
-      {
-        changeTo(
-          node("lvalue"), 
-          cat(
-            "__trace_variable_update_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
-          )
-        ),
-        // changeTo(
-        //   node("rvalue"), 
-        //   cat(
-        //     "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
-        //   )
-        // ), 
-      },
-      assignment_found
-    );
 
+  auto capture_lvalue = hasLHS(
+      declRefExpr(
+        to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
+      ).bind("lvalue")
+    );
+  auto change_lvalue = changeTo(
+      node("lvalue"), 
+      cat(
+        "__trace_variable_update_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
+      )
+    );
+  
   // <DeclRefExpr> = <DeclRefExpr>;
   auto HandleRvalueDeclRefExprAssignment = makeRule(
+      // TODO: v += u を v = v + u に正規化
       binaryOperator(
-        hasOperatorName("="), 
+        isAssignmentOperator(),
+        capture_lvalue,
         hasRHS(ignoringImpCasts(
           declRefExpr(anyOf(
             // 一時変数
@@ -91,29 +71,37 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           )).bind("rvalue")
         ))
       ),
-      changeTo(
-        node("rvalue"), 
-        cat(
-          "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
-        )
-      ), 
+      {
+        change_lvalue,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
+          )
+        ), 
+      },
       assignment_found
     );
 
   // <DeclRefExpr> = <IntegerLiteral>
   auto HandleRvalueLiteralAssignment = makeRule(
+      // TODO: v += u を v = v + u に正規化
       binaryOperator(
-        hasOperatorName("="), 
+        isAssignmentOperator(),
+        capture_lvalue,
         hasRHS(
           expr(integerLiteral()).bind("rvalue")
         )
       ),
-      changeTo(
-        node("rvalue"), 
-        cat(
-          "__trace_variable_update_rvalue(", node("rvalue"), ", ", "const int", ")"
-        )
-      ), 
+      {
+        change_lvalue,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_variable_update_rvalue(", node("rvalue"), ", ", "const int", ")"
+          )
+        ), 
+      },
       assignment_found
     );
 
@@ -121,7 +109,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueBinaryOperatorDeclRefExprAssignment = makeRule(
       declRefExpr(
         hasParent(implicitCastExpr(
-          hasParent(binaryOperator(unless(hasOperatorName("="))))
+          hasParent(binaryOperator(unless(isAssignmentOperator())))
         )),
         to(varDecl(hasTypeLoc(typeLoc().bind("var_type"))))
       ).bind("var"),
@@ -129,24 +117,32 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         node("var"), 
         cat(
           "__trace_variable_update_rvalue(", name("var"), ", ", name("var_type"), ")"
-          // "__trace_variable_update_rvalue(", name("var"), ", ", "TODO", ")"
         )
-      ), 
+      ),
       assignment_found
     );
 
-  // TODO: <DeclRefExpr> = ... <IntegerLiteral> ...
-
+  // <DeclRefExpr> = ... <IntegerLiteral> ...
+  auto HandleRvalueBinaryOperatorIntegerLiteralAssignment = makeRule(
+      expr(integerLiteral(
+        hasParent(binaryOperator(unless(isAssignmentOperator())))
+      )).bind("var"),
+      changeTo(
+        node("var"), 
+        cat(
+          "__trace_variable_update_rvalue(", node("var"), ", ", "const int", ")"
+        )
+      ),
+      assignment_found
+    );
 
   // TODO: 関数呼び出しありの代入
 
   return applyFirst({
-    // HandleX,
-    // HandleY,
-    // HandleLvalueAssignment,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
     HandleRvalueBinaryOperatorDeclRefExprAssignment,
+    HandleRvalueBinaryOperatorIntegerLiteralAssignment,
   });
 }
 
