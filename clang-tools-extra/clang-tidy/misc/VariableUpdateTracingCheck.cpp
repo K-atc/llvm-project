@@ -29,7 +29,19 @@ using namespace ::clang::transformer;
 RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   std::cerr << "[*] VariableUpdateTracingCheckImpl" << std::endl;
 
+  auto declaration_found = cat("Variable declaration found 📢");
   auto assignment_found = cat("assignment found 🎉");
+
+  // __trace_??? 関数呼び出し内ではマッチさせない
+  auto HandleTraceFunctionCall = makeRule(
+    callExpr(callee(functionDecl(hasAnyName(
+      "__trace_variable_declaration", 
+      "__trace_variable_lvalue",
+      "__trace_variable_rvalue"
+    )))),
+    {},
+    cat("Trace function found 🤫")
+  );
 
   // <DeclStmt>
   auto HandleDeclStmt = makeRule(
@@ -40,12 +52,35 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       changeTo(
         after(node("lvalue")),
         cat(
-          "__trace_variable_declaration(", name("lvalue"), ", ", name("lvalue_type"), ");"
+          " __trace_variable_declaration(", name("lvalue"), ", ", name("lvalue_type"), ");"
         )
       ),
     },
-    cat("variable declaration found 📢")
+    declaration_found
   );
+
+/*
+|   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
+|   | `-VarDecl 0x14a2558 <col:5, col:13> col:9 used z 'int' cinit
+|   |   `-ImplicitCastExpr 0x14a25e0 <col:13> 'int' <LValueToRValue>
+|   |     `-DeclRefExpr 0x14a25c0 <col:13> 'int' lvalue Var 0x14a2308 'x' 'int'
+*/
+  // <DeclStmt <VarDecl> = <DeclRefExpr>>
+  auto HandleDeclRefExprDeclStmt = makeRule(
+      declRefExpr(
+        hasParent(implicitCastExpr(
+          hasParent(varDecl())
+        )),
+        to(varDecl(hasTypeLoc(typeLoc().bind("var_type"))))
+      ).bind("var"),
+      changeTo(
+        node("var"), 
+        cat(
+          "__trace_variable_rvalue(", name("var"), ", ", name("var_type"), ")"
+        )
+      ),
+      declaration_found
+    );
 
   auto capture_lvalue = hasLHS(
       declRefExpr(
@@ -55,7 +90,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto change_lvalue = changeTo(
       node("lvalue"), 
       cat(
-        "__trace_variable_update_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
+        "__trace_variable_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
       )
     );
 
@@ -79,7 +114,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_variable_update_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
+            "__trace_variable_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
           )
         ), 
       },
@@ -101,16 +136,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_variable_update_rvalue(", node("rvalue"), ", ", "const int", ")"
+            "__trace_variable_rvalue(", node("rvalue"), ", ", "const int", ")"
           )
         ), 
       },
       assignment_found
     );
 
-  // FIXME: int y = x + 1; だと varDecl と干渉する
-  // <DeclRefExpr> = ... <DeclRefExpr> ...
-  auto HandleRvalueBinaryOperatorDeclRefExprAssignment = makeRule(
+  // <BinaryOperator <DeclRefExpr> ...>
+  auto HandleRvalueBinaryOperatorDeclRefExprBinaryOperator = makeRule(
       declRefExpr(
         hasParent(implicitCastExpr(
           hasParent(binaryOperator(unless(isAssignmentOperator())))
@@ -120,21 +154,21 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       changeTo(
         node("var"), 
         cat(
-          "__trace_variable_update_rvalue(", name("var"), ", ", name("var_type"), ")"
+          "__trace_variable_rvalue(", name("var"), ", ", name("var_type"), ")"
         )
       ),
       assignment_found
     );
 
-  // <DeclRefExpr> = ... <IntegerLiteral> ...
-  auto HandleRvalueBinaryOperatorIntegerLiteralAssignment = makeRule(
+  // <BinaryOperator <IntegerLiteral> ...>
+  auto HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator = makeRule(
       expr(integerLiteral(
         hasParent(binaryOperator(unless(isAssignmentOperator())))
       )).bind("var"),
       changeTo(
         node("var"), 
         cat(
-          "__trace_variable_update_rvalue(", node("var"), ", ", "const int", ")"
+          "__trace_variable_rvalue(", node("var"), ", ", "const int", ")"
         )
       ),
       assignment_found
@@ -142,11 +176,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // TODO: 関数呼び出しありの代入
 
-/*
-|   `-ReturnStmt 0x18c0528 <line:22:5, col:12>
-|     `-ImplicitCastExpr 0x18c0510 <col:12> 'int' <LValueToRValue>
-|       `-DeclRefExpr 0x18c04f0 <col:12> 'int' lvalue Var 0x18c03f8 'res' 'int'
-*/
   // <ReturnStmt <DeclRefExpr>>
   auto HandleDeclRefExprReturnStmt = makeRule(
       returnStmt(hasReturnValue(ignoringImpCasts(declRefExpr(
@@ -155,26 +184,36 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       changeTo(
         node("var"), 
         cat(
-          "__trace_variable_update_rvalue(", node("var"), ", ", name("var_type"), ")"
+          "__trace_variable_rvalue(", node("var"), ", ", name("var_type"), ")"
         )
       ),
       cat("Function return statement found 📢")
     );
 
-/*
-|   `-ReturnStmt 0x18c00c0 <line:12:5, col:12>
-|     `-IntegerLiteral 0x18c00a0 <col:12> 'int' 0
-*/
-  // TODO: <ReturnStmt <IntegerLiteral>>
+  // <ReturnStmt <IntegerLiteral>>
+  auto HandleIntegerLiteralReturnStmt = makeRule(
+      returnStmt(hasReturnValue(expr(integerLiteral()).bind("var"))),
+      changeTo(
+        node("var"), 
+        cat(
+          "__trace_variable_rvalue(", node("var"), ", ", "const int", ")"
+        )
+      ),
+      cat("Function return statement found 📢")
+    );
+
   // TODO: <ReturnStmt <BinaryOperation>>
 
   return applyFirst({
+    HandleTraceFunctionCall,
     HandleDeclStmt,
+    HandleDeclRefExprDeclStmt,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
-    HandleRvalueBinaryOperatorDeclRefExprAssignment,
-    HandleRvalueBinaryOperatorIntegerLiteralAssignment,
+    HandleRvalueBinaryOperatorDeclRefExprBinaryOperator,
+    HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator,
     HandleDeclRefExprReturnStmt,
+    HandleIntegerLiteralReturnStmt,
   });
 }
 
