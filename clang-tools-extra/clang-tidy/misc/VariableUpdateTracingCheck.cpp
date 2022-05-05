@@ -29,20 +29,23 @@ using namespace ::clang::transformer;
 RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   std::cerr << "[*] VariableUpdateTracingCheckImpl" << std::endl;
 
-  auto assignment_found =
-      cat("assignment found 🎉");
+  auto assignment_found = cat("assignment found 🎉");
 
-  // auto HandleX = makeRule(
-  //     functionDecl(hasName("bad")).bind("name"),
-  //     changeTo(name("name"), cat("good")),
-  //     cat("bad is now good")
-  //   );
-
-  // auto HandleY = makeRule(declRefExpr(to(functionDecl(hasName("MkX")))),
-  //        changeTo(cat("MakeX")),
-  //        cat("MkX has been renamed MakeX"));
-  
-  // TODO: 初期化ありの変数宣言 int lhs = 1;
+  // <DeclStmt>
+  auto HandleDeclStmt = makeRule(
+    declStmt(hasSingleDecl(varDecl(
+      hasTypeLoc(typeLoc().bind("lvalue_type"))
+    ).bind("lvalue"))),
+    {
+      changeTo(
+        after(node("lvalue")),
+        cat(
+          "__trace_variable_declaration(", name("lvalue"), ", ", name("lvalue_type"), ");"
+        )
+      ),
+    },
+    cat("variable declaration found 📢")
+  );
 
   auto capture_lvalue = hasLHS(
       declRefExpr(
@@ -55,7 +58,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         "__trace_variable_update_lvalue(", name("lvalue"), ", ", name("lvalue_type"), ")"
       )
     );
-  
+
   // <DeclRefExpr> = <DeclRefExpr>;
   auto HandleRvalueDeclRefExprAssignment = makeRule(
       // TODO: v += u を v = v + u に正規化
@@ -105,6 +108,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found
     );
 
+  // FIXME: int y = x + 1; だと varDecl と干渉する
   // <DeclRefExpr> = ... <DeclRefExpr> ...
   auto HandleRvalueBinaryOperatorDeclRefExprAssignment = makeRule(
       declRefExpr(
@@ -138,11 +142,39 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // TODO: 関数呼び出しありの代入
 
+/*
+|   `-ReturnStmt 0x18c0528 <line:22:5, col:12>
+|     `-ImplicitCastExpr 0x18c0510 <col:12> 'int' <LValueToRValue>
+|       `-DeclRefExpr 0x18c04f0 <col:12> 'int' lvalue Var 0x18c03f8 'res' 'int'
+*/
+  // <ReturnStmt <DeclRefExpr>>
+  auto HandleDeclRefExprReturnStmt = makeRule(
+      returnStmt(hasReturnValue(ignoringImpCasts(declRefExpr(
+        to(varDecl(hasTypeLoc(typeLoc().bind("var_type"))))
+      ).bind("var")))),
+      changeTo(
+        node("var"), 
+        cat(
+          "__trace_variable_update_rvalue(", node("var"), ", ", name("var_type"), ")"
+        )
+      ),
+      cat("Function return statement found 📢")
+    );
+
+/*
+|   `-ReturnStmt 0x18c00c0 <line:12:5, col:12>
+|     `-IntegerLiteral 0x18c00a0 <col:12> 'int' 0
+*/
+  // TODO: <ReturnStmt <IntegerLiteral>>
+  // TODO: <ReturnStmt <BinaryOperation>>
+
   return applyFirst({
+    HandleDeclStmt,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
     HandleRvalueBinaryOperatorDeclRefExprAssignment,
     HandleRvalueBinaryOperatorIntegerLiteralAssignment,
+    HandleDeclRefExprReturnStmt,
   });
 }
 
