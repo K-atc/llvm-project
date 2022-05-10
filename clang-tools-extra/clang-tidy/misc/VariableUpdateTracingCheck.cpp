@@ -33,31 +33,33 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto assignment_found = cat("assignment found 🎉");
 
   // __trace_??? 関数呼び出し内ではマッチさせない
+  // => マクロなので関数として認識されない！
   auto HandleTraceFunctionCall = makeRule(
     callExpr(callee(functionDecl(hasAnyName(
       "__trace_variable_declaration", 
       "__trace_variable_lvalue",
       "__trace_variable_rvalue"
-    )))),
-    {},
+    )))).bind("expr"),
+    changeTo(node("expr"), cat(node("expr"))),
     cat("Trace function found 🤫")
   );
 
   // <DeclStmt>
-  auto HandleDeclStmt = makeRule(
-    declStmt(hasSingleDecl(varDecl(
-      hasTypeLoc(typeLoc().bind("lvalue_type"))
-    ).bind("lvalue"))),
-    {
-      changeTo(
-        after(node("lvalue")),
-        cat(
-          " __trace_variable_declaration(", name("lvalue"), ", ", name("lvalue_type"), ");"
-        )
-      ),
-    },
-    declaration_found
-  );
+  // 初期化パターンを網羅するのが難しい。特に構造体
+  // auto HandleDeclStmt = makeRule(
+  //   declStmt(hasSingleDecl(varDecl(
+  //     hasTypeLoc(typeLoc().bind("lvalue_type"))
+  //   ).bind("lvalue"))),
+  //   {
+  //     changeTo(
+  //       after(node("lvalue")),
+  //       cat(
+  //         " __trace_variable_declaration(", name("lvalue"), ", ", name("lvalue_type"), ");"
+  //       )
+  //     ),
+  //   },
+  //   declaration_found
+  // );
 
 /*
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
@@ -82,10 +84,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       declaration_found
     );
 
-  auto capture_lvalue = hasLHS(
+  auto capture_declrefexpr_lvalue = hasLHS(
       declRefExpr(
         to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
       ).bind("lvalue")
+    );
+  auto capture_memberexpr_lvalue = hasLHS(
+      memberExpr(member(
+        fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))
+      )).bind("lvalue")
     );
   auto change_lvalue = changeTo(
       node("lvalue"), 
@@ -99,7 +106,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       // TODO: v += u を v = v + u に正規化
       binaryOperator(
         isAssignmentOperator(),
-        capture_lvalue,
+        capture_declrefexpr_lvalue,
         hasRHS(ignoringImpCasts(
           declRefExpr(anyOf(
             // 一時変数
@@ -126,7 +133,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       // TODO: v += u を v = v + u に正規化
       binaryOperator(
         isAssignmentOperator(),
-        capture_lvalue,
+        capture_declrefexpr_lvalue,
         hasRHS(
           expr(integerLiteral()).bind("rvalue")
         )
@@ -137,6 +144,43 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           node("rvalue"), 
           cat(
             "__trace_variable_rvalue(", node("rvalue"), ", ", "const int", ")"
+          )
+        ), 
+      },
+      assignment_found
+    );
+
+  // TODO: 構造体メンバー = <DeclRefExpr>
+/*
+|   |-BinaryOperator 0x8c5390 <line:28:5, col:31> 'int' '='
+|   | |-MemberExpr 0x8c5258 <col:5, col:12> 'int' lvalue ->result 0x8c4c30
+|   | | `-ImplicitCastExpr 0x8c5240 <col:5> 'struct Param *' <LValueToRValue>
+|   | |   `-DeclRefExpr 0x8c5220 <col:5> 'struct Param *' lvalue ParmVar 0x8c4d30 'param' 'struct Param *'
+*/
+  auto HandleLvalueMemberExprRvalueDeclRefExprAssignment = makeRule(
+      binaryOperator(
+        isAssignmentOperator(),
+        capture_memberexpr_lvalue,
+        hasRHS(ignoringImpCasts(
+          declRefExpr(anyOf(
+            // 一時変数
+            to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+            // 関数引数
+            to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
+          )).bind("rvalue")
+        ))
+      ),
+      {
+        changeTo(
+          node("lvalue"), 
+          cat(
+            "__trace_variable_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ")"
+          )
+        ),
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_variable_rvalue(", name("rvalue"), ", ", name("rvalue_type"), ")"
           )
         ), 
       },
@@ -204,12 +248,22 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // TODO: <ReturnStmt <BinaryOperation>>
 
+  // TODO: <ReturnStmt <構造体>>
+/*
+|   `-ReturnStmt 0x8c5440 <line:29:5, col:19>
+|     `-ImplicitCastExpr 0x8c5428 <col:12, col:19> 'int' <LValueToRValue>
+|       `-MemberExpr 0x8c53f8 <col:12, col:19> 'int' lvalue ->result 0x8c4c30
+|         `-ImplicitCastExpr 0x8c53e0 <col:12> 'struct Param *' <LValueToRValue>
+|           `-DeclRefExpr 0x8c53c0 <col:12> 'struct Param *' lvalue ParmVar 0x8c4d30 'param' 'struct Param *'
+*/
+
   return applyFirst({
-    HandleTraceFunctionCall,
-    HandleDeclStmt,
+    HandleTraceFunctionCall, // 無意味
+    // HandleDeclStmt,
     HandleDeclRefExprDeclStmt,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
+    HandleLvalueMemberExprRvalueDeclRefExprAssignment,
     HandleRvalueBinaryOperatorDeclRefExprBinaryOperator,
     HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator,
     HandleDeclRefExprReturnStmt,
