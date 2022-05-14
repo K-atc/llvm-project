@@ -57,15 +57,37 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )).bind("rvalue")
     ));
 
+/* (1)
+|   |-DeclStmt 0x152bad8 <line:40:5, col:16>
+|   | `-VarDecl 0x152ba08 <col:5, col:15> col:9 w 'int' cinit
+|   |   `-ImplicitCastExpr 0x152bac0 <col:13, col:15> 'int' <LValueToRValue>
+|   |     `-MemberExpr 0x152ba90 <col:13, col:15> 'int' lvalue .b 0x152af30
+|   |       `-DeclRefExpr 0x152ba70 <col:13> 'struct pair':'struct pair' lvalue Var 0x152b570 'p' 'struct pair':'struct pair'
+*/
+/* (2)
+|   |-DeclStmt 0x1e5a358 <line:60:5, col:34>
+|   | `-VarDecl 0x1e5a240 <col:5, col:28> col:9 length 'int' cinit
+|   |   `-ImplicitCastExpr 0x1e5a340 <col:18, col:28> 'int' <LValueToRValue>
+|   |     `-MemberExpr 0x1e5a310 <col:18, col:28> 'int' lvalue .length 0x1e59a78
+|   |       `-MemberExpr 0x1e5a2e0 <col:18, col:21> 'struct (unnamed struct at bad.c:51:5)':'struct header::(unnamed at bad.c:51:5)' lvalue ->nested 0x1e59b28
+|   |         `-ImplicitCastExpr 0x1e5a2c8 <col:18> 'struct header *' <LValueToRValue>
+|   |           `-DeclRefExpr 0x1e5a2a8 <col:18> 'struct header *' lvalue Var 0x1e5a090 'h' 'struct header *'
+*/
+  auto capture_record_type = ignoringImpCasts(anyOf(
+      /* (1) */ declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))),
+      /* (2) */ memberExpr(has(ignoringImpCasts(
+        declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type")))))
+      )))
+    ));
   auto capture_memberexpr_lvalue = hasLHS(
       memberExpr(
         member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
-        has(declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))))
+        has(capture_record_type)
       ).bind("lvalue")
     );
   auto capture_memberexpr_rvalue = memberExpr(
         member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-        has(declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))))
+        has(capture_record_type)
       ).bind("rvalue");
 
   auto change_lvalue = changeTo(
@@ -140,13 +162,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       declaration_found
     );
 
-/*
-|   |-DeclStmt 0x152bad8 <line:40:5, col:16>
-|   | `-VarDecl 0x152ba08 <col:5, col:15> col:9 w 'int' cinit
-|   |   `-ImplicitCastExpr 0x152bac0 <col:13, col:15> 'int' <LValueToRValue>
-|   |     `-MemberExpr 0x152ba90 <col:13, col:15> 'int' lvalue .b 0x152af30
-|   |       `-DeclRefExpr 0x152ba70 <col:13> 'struct pair':'struct pair' lvalue Var 0x152b570 'p' 'struct pair':'struct pair'
-*/
   // <VarDecl <MemberExpr <DeclRefExpr>>>
   auto HandleRvalueMemberExprVarDecl = makeRule(
       expr(
