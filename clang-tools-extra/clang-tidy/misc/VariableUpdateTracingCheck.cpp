@@ -29,8 +29,8 @@ using namespace ::clang::transformer;
 RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   std::cerr << "[*] VariableUpdateTracingCheckImpl" << std::endl;
 
-  auto declaration_found = cat("Variable declaration found 📢");
-  auto assignment_found = cat("Assignment found 🎉");
+  auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
+  auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
   auto compare_found = cat("Compare found 🏆");
 
   // __trace_??? 関数呼び出し内ではマッチさせない
@@ -48,14 +48,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto capture_declrefexpr_lvalue = declRefExpr(
         to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
       ).bind("lvalue");
-  auto capture_declrefexpr_rvalue = hasRHS(ignoringImpCasts(
-      declRefExpr(anyOf(
+  auto capture_declrefexpr_rvalue = ignoringImpCasts(declRefExpr(anyOf(
         // 一時変数
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
         // 関数引数
         to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-      )).bind("rvalue")
-    ));
+      )).bind("rvalue"));
 
 /* (1)
 |   |-DeclStmt 0x152bad8 <line:40:5, col:16>
@@ -73,22 +71,41 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |         `-ImplicitCastExpr 0x1e5a2c8 <col:18> 'struct header *' <LValueToRValue>
 |   |           `-DeclRefExpr 0x1e5a2a8 <col:18> 'struct header *' lvalue Var 0x1e5a090 'h' 'struct header *'
 */
-  auto capture_record_type = ignoringImpCasts(anyOf(
-      /* (1) */ declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))),
-      /* (2) */ memberExpr(has(ignoringImpCasts(
-        declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type")))))
-      )))
-    ));
-  auto capture_memberexpr_lvalue = hasLHS(
-      memberExpr(
-        member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
-        has(capture_record_type)
-      ).bind("lvalue")
+/* (3)
+|   |-DeclStmt 0x186ad90 <line:65:5, col:39>
+|   | `-VarDecl 0x186ac48 <col:5, col:34> col:9 value 'int' cinit
+|   |   `-ImplicitCastExpr 0x186ad78 <col:17, col:34> 'int' <LValueToRValue>
+|   |     `-MemberExpr 0x186ad48 <col:17, col:34> 'int' lvalue .value 0x1869d88
+|   |       `-MemberExpr 0x186ad18 <col:17, col:27> 'struct (unnamed struct at bad.c:54:9)':'struct header::(unnamed at bad.c:54:9)' lvalue .nested 0x1869e38
+|   |         `-MemberExpr 0x186ace8 <col:17, col:20> 'struct (unnamed struct at bad.c:52:5)':'struct header::(unnamed at bad.c:52:5)' lvalue ->nested 0x1869ee8
+|   |           `-ImplicitCastExpr 0x186acd0 <col:17> 'struct header *' <LValueToRValue>
+|   |             `-DeclRefExpr 0x186acb0 <col:17> 'struct header *' lvalue Var 0x186a950 'h' 'struct header *'
+*/
+/* (3)
+|   |-BinaryOperator 0x132a068 <line:69:5, col:30> 'int' '='
+|   | |-DeclRefExpr 0x1329f68 <col:5> 'int' lvalue Var 0x1329d38 'value' 'int'
+|   | `-ImplicitCastExpr 0x132a050 <col:13, col:30> 'int' <LValueToRValue>
+|   |   `-MemberExpr 0x132a020 <col:13, col:30> 'int' lvalue .value 0x1328f88
+|   |     `-MemberExpr 0x1329ff0 <col:13, col:23> 'struct (unnamed struct at bad.c:55:9)':'struct header::(unnamed at bad.c:55:9)' lvalue .nested 0x1329038
+|   |       `-MemberExpr 0x1329fc0 <col:13, col:16> 'struct (unnamed struct at bad.c:53:5)':'struct header::(unnamed at bad.c:53:5)' lvalue ->nested 0x13290e8
+|   |         `-ImplicitCastExpr 0x1329fa8 <col:13> 'struct header *' <LValueToRValue>
+|   |           `-DeclRefExpr 0x1329f88 <col:13> 'struct header *' lvalue Var 0x1329b70 'h' 'struct header *'
+*/
+  auto __capture_record_type = ignoringImpCasts(declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))));
+  auto capture_record_type = anyOf(
+      // /* (1) */ __capture_record_type,
+      /* (1) */ memberExpr(has(__capture_record_type)),
+      /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
+      /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
     );
+  auto capture_memberexpr_lvalue = memberExpr(
+      member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
+      capture_record_type
+    ).bind("lvalue");
   auto capture_memberexpr_rvalue = memberExpr(
-        member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-        has(capture_record_type)
-      ).bind("rvalue");
+      member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+      capture_record_type
+    ).bind("rvalue");
 
   auto change_lvalue = changeTo(
       node("lvalue"), 
@@ -103,31 +120,49 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )
     );
   auto change_rvalue_const_int = changeTo(
-        node("rvalue"), 
-        cat(
-          "__trace_variable_rvalue(", node("rvalue"), ", ", "const int", ")"
-        )
-      );
+      node("rvalue"), 
+      cat(
+        "__trace_variable_rvalue(", node("rvalue"), ", ", "const int", ")"
+      )
+    );
+  auto change_member_lvalue = changeTo(
+      node("lvalue"), 
+      cat(
+        "__trace_member_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ", ", node("record_type"), ")"
+      )
+    );
 
   // <DeclStmt>
   // 初期化パターンを網羅するのが難しい。特に構造体やループの中の変数宣言
+  // FIXME: 2つ目の変数を拾えてない
+/*
+|   |-DeclStmt 0x19db570 <line:42:5, col:13>
+|   | |-VarDecl 0x19da3d0 <col:5, col:9> col:9 used x 'int'
+|   | `-VarDecl 0x19db4f0 <col:5, col:12> col:12 used y 'int'
+*/
   auto HandleDeclStmt = makeRule(
     declStmt(
       unless(hasParent(forStmt())), // 文法破壊防止
-      hasSingleDecl(varDecl(
+      forEach(varDecl(
         hasTypeLoc(typeLoc().bind("lvalue_type"))
       ).bind("lvalue"))
-    ),
+    ).bind("insert_point"),
     {
       // 右辺の書き換えは別のルールに任せる
       changeTo(
-        after(node("lvalue")),
-        cat(
-          " __trace_variable_declaration(", name("lvalue"), ", ", node("lvalue_type"), ");"
-        )
+        node("insert_point"),
+        cat(node("insert_point"), " __trace_variable_declaration(")
+      ),
+      changeTo(
+        node("lvalue"),
+        cat(name("lvalue"), ", ")
+      ),
+      changeTo(
+        after(node("insert_point")),
+        cat(node("lvalue_type"), ");")
       ),
     },
-    declaration_found
+    declaration_found("HandleDeclStmt")
   );
 
 /*
@@ -145,7 +180,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
       change_rvalue,
-      declaration_found
+      declaration_found("HandleRefExprVarDecl")
     );
 
   // <VarDecl <IntegerLiteral>>
@@ -159,13 +194,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasParent(varDecl())
       )).bind("rvalue"),
       change_rvalue_const_int,
-      declaration_found
+      declaration_found("HandleIntegerLiteralVarDecl")
     );
 
   // <VarDecl <MemberExpr <DeclRefExpr>>>
   auto HandleRvalueMemberExprVarDecl = makeRule(
       expr(
-        hasParent(implicitCastExpr(hasParent(varDecl()))),
+        hasParent(implicitCastExpr(
+          hasParent(varDecl())
+        )),
         capture_memberexpr_rvalue
       ),
       {
@@ -176,46 +213,69 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           )
         ), 
       },
-      assignment_found
+      assignment_found("HandleRvalueMemberExprVarDecl")
     );
 
   // <VarDecl <CallExpr>>
   // NOTE: 関数の戻り値をトラックすれば省略可能
 
-  // <DeclRefExpr> = <DeclRefExpr>;
-  auto HandleRvalueDeclRefExprAssignment = makeRule(
-      // TODO: v += u を v = v + u に正規化
-      binaryOperator(
-        isAssignmentOperator(),
-        hasLHS(capture_declrefexpr_lvalue),
-        capture_declrefexpr_rvalue
+  // <AssingnOperator <DeclRefExpr> <???>>
+  // lvalue をハンドルするのみ
+  auto HandleLvalueDeclRefExprAssignment = makeRule(
+      expr(
+        hasParent(binaryOperator(isAssignmentOperator())),
+        capture_declrefexpr_lvalue
       ),
-      {
-        change_lvalue,
-        change_rvalue,
-      },
-      assignment_found
+      change_lvalue,
+      assignment_found("HandleLvalueDeclRefExprAssignment")
     );
 
-  // <DeclRefExpr> = <IntegerLiteral>
-  // <DeclRefExpr> ?= <IntegerLiteral>
+  // <MemberExpr> = <???>
+  // lvalue をハンドルするのみ
+  auto HandleLvalueMemberExprAssignment = makeRule(
+      expr(
+        hasParent(binaryOperator(isAssignmentOperator())),
+        capture_memberexpr_lvalue
+      ),
+      change_member_lvalue,
+      assignment_found("HandleLvalueMemberExprAssignment")
+    );
+
+  // <???> = <DeclRefExpr>;
+  // rvalue をハンドルするのみ
+  auto HandleRvalueDeclRefExprAssignment = makeRule(
+      // TODO: v += u を v = v + u に正規化
+      expr(
+        hasParent(binaryOperator(isAssignmentOperator())),
+        capture_declrefexpr_rvalue
+      ),
+      change_rvalue,
+      assignment_found("HandleRvalueDeclRefExprAssignment")
+    );
+
+  // <???> = <IntegerLiteral>
+  // <???> ?= <IntegerLiteral>
+  // rvalue をハンドルするのみ
+/*
+|   |-BinaryOperator 0x20156d0 <line:45:5, col:12> 'int' '='
+|   | |-MemberExpr 0x2015680 <col:5, col:8> 'int' lvalue ->b 0x20104c0
+|   | | `-ImplicitCastExpr 0x2015668 <col:5> 'struct pair *' <LValueToRValue>
+|   | |   `-DeclRefExpr 0x2015648 <col:5> 'struct pair *' lvalue Var 0x2014300 'q' 'struct pair *'
+|   | `-IntegerLiteral 0x20156b0 <col:12> 'int' 1
+*/
   auto HandleRvalueLiteralAssignment = makeRule(
       // TODO: v += u を v = v + u に正規化
-      binaryOperator(
-        anyOf(
-          isAssignmentOperator(),
-          hasAnyOperatorName("+=", "-=")
-        ),
-        hasLHS(capture_declrefexpr_lvalue),
-        hasRHS(
-          expr(integerLiteral()).bind("rvalue")
-        )
-      ),
-      {
-        change_lvalue,
-        change_rvalue_const_int,
-      },
-      assignment_found
+      expr(
+        hasParent(binaryOperator(
+          anyOf(
+            isAssignmentOperator(),
+            hasAnyOperatorName("+=", "-=")
+          )
+        )),
+        integerLiteral()
+      ).bind("rvalue"),
+      change_rvalue_const_int,
+      assignment_found("HandleRvalueLiteralAssignment")
     );
 
   // <DeclRefExpr>++
@@ -239,78 +299,39 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       cat("<DeclRefExpr>++ found")
     );
 
-  // <DeclRefExpr> = <MemberExpr <DeclRefExpr>>
+  // <???> = <MemberExpr <DeclRefExpr>>
+  // rvalue をハンドルするのみ
+/*
+|   `-BinaryOperator 0x1a9ea80 <line:47:5, col:15> 'int' '='
+|     |-MemberExpr 0x1a9e9d0 <col:5, col:8> 'int' lvalue ->a 0x1a99528
+|     | `-ImplicitCastExpr 0x1a9e9b8 <col:5> 'struct pair *' <LValueToRValue>
+|     |   `-DeclRefExpr 0x1a9e998 <col:5> 'struct pair *' lvalue Var 0x1a9d3d0 'q' 'struct pair *'
+|     `-ImplicitCastExpr 0x1a9ea68 <col:12, col:15> 'int' <LValueToRValue>
+|       `-MemberExpr 0x1a9ea38 <col:12, col:15> 'int' lvalue ->b 0x1a99590
+|         `-ImplicitCastExpr 0x1a9ea20 <col:12> 'struct pair *' <LValueToRValue>
+|           `-DeclRefExpr 0x1a9ea00 <col:12> 'struct pair *' lvalue Var 0x1a9d3d0 'q' 'struct pair *'
+*/
   auto HandleRvalueMemberExprAssignment = makeRule(
       // TODO: v += u を v = v + u に正規化
-      binaryOperator(
-        isAssignmentOperator(),
-        hasLHS(capture_declrefexpr_lvalue),
-        hasRHS(capture_memberexpr_rvalue)
+      expr(
+        hasParent(implicitCastExpr(
+          hasParent(binaryOperator(isAssignmentOperator()))
+        )),
+        capture_memberexpr_rvalue
       ),
-      {
-        change_lvalue,
-        changeTo(
-          node("rvalue"), 
-          cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
-          )
-        ), 
-      },
-      assignment_found
-    );
-
-  // <MemberExpr <DeclRefExpr>> = <DeclRefExpr>
-/*
-|   |-BinaryOperator 0x8c5390 <line:28:5, col:31> 'int' '='
-|   | |-MemberExpr 0x8c5258 <col:5, col:12> 'int' lvalue ->result 0x8c4c30
-|   | | `-ImplicitCastExpr 0x8c5240 <col:5> 'struct Param *' <LValueToRValue>
-|   | |   `-DeclRefExpr 0x8c5220 <col:5> 'struct Param *' lvalue ParmVar 0x8c4d30 'param' 'struct Param *'
-*/
-  auto HandleLvalueMemberExprRvalueDeclRefExprAssignment = makeRule(
-      binaryOperator(
-        isAssignmentOperator(),
-        capture_memberexpr_lvalue,
-        capture_declrefexpr_rvalue
-      ),
-      {
-        changeTo(
-          node("lvalue"), 
-          cat(
-            "__trace_member_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ", ", node("record_type"), ")"
-          )
-        ),
-        change_rvalue, 
-      },
-      assignment_found
-    );
-
-  // <MemberExpr <DeclRefExpr>> = <IntegerLiteral>
-  auto HandleLvalueMemberExprRvalueIntegerLiteralAssignment = makeRule(
-      // TODO: v += u を v = v + u に正規化
-      binaryOperator(
-        isAssignmentOperator(),
-        capture_memberexpr_lvalue,
-        hasRHS(
-          expr(integerLiteral()).bind("rvalue")
+      changeTo(
+        node("rvalue"), 
+        cat(
+          "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
         )
-      ),
-      {
-        changeTo(
-          node("lvalue"), 
-          cat(
-            "__trace_member_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ", ", node("record_type"), ")"
-          )
-        ),
-        change_rvalue_const_int, 
-      },
-      assignment_found
+      ), 
+      assignment_found("HandleRvalueMemberExprAssignment")
     );
-
-  // TODO: <MemberExpr <DeclRefExpr>> = <MemberExpr <DeclRefExpr>>
 
   // <BinaryOperator <DeclRefExpr> ...>
+  // rvalue のみchangeTo
   // TODO: HandleCompareOperator が優先されてこのルールによるfixが無視される
-  auto HandleRvalueBinaryOperatorDeclRefExprBinaryOperator = makeRule(
+  auto HandleRvalueDeclRefExprBinaryOperator = makeRule(
       declRefExpr(
         hasParent(implicitCastExpr(
           hasParent(binaryOperator(unless(isAssignmentOperator())))
@@ -318,7 +339,29 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
       change_rvalue,
-      assignment_found
+      assignment_found("HandleRvalueDeclRefExprBinaryOperator")
+    );
+
+/*
+|   `-DeclStmt 0x8cc178 <line:37:5, col:22>
+|     `-VarDecl 0x8cc020 <col:5, col:21> col:9 z 'int' cinit
+|       `-BinaryOperator 0x8cc158 <col:13, col:21> 'int' '+'
+|         |-ImplicitCastExpr 0x8cc128 <col:13, col:15> 'int' <LValueToRValue>
+|         | `-MemberExpr 0x8cc0a8 <col:13, col:15> 'int' lvalue .a 0x8c8548
+|         |   `-DeclRefExpr 0x8cc088 <col:13> 'struct pair':'struct pair' lvalue Var 0x8cb9a0 'p' 'struct pair':'struct pair'
+|         `-ImplicitCastExpr 0x8cc140 <col:19, col:21> 'int' <LValueToRValue>
+|           `-MemberExpr 0x8cc0f8 <col:19, col:21> 'int' lvalue .b 0x8c85b0
+|             `-DeclRefExpr 0x8cc0d8 <col:19> 'struct pair':'struct pair' lvalue Var 0x8cb9a0 'p' 'struct pair':'struct pair'
+*/
+  auto HandleRvalueMemberExprBinaryOperator = makeRule(
+      expr(
+        hasParent(implicitCastExpr(
+          hasParent(binaryOperator(unless(isAssignmentOperator())))
+        )),
+        capture_memberexpr_rvalue
+      ),
+      change_rvalue,
+      assignment_found("HandleRvalueMemberExprBinaryOperator")
     );
 
   // <BinaryOperator <IntegerLiteral> ...>
@@ -327,7 +370,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasParent(binaryOperator(unless(isAssignmentOperator())))
       )).bind("rvalue"),
       change_rvalue_const_int,
-      assignment_found
+      assignment_found("HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator")
     );
 
   // TODO: 構造体メンバーへのアクセスありのBinaryOperator
@@ -335,11 +378,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <BinaryOperator <DeclRefExpr> ...>
   auto HandleCompareOperator = makeRule(
-      binaryOperator(isComparisonOperator()).bind("expr"),
+      binaryOperator(anyOf(
+        isComparisonOperator(),
+        hasAnyOperatorName("||", "&&")
+      )).bind("expr"),
       changeTo(
         node("expr"), 
         cat(
-          "__trace_compare(", node("expr"), ")"
+          "__trace_condition(", node("expr"), ")"
         )
       ),
       compare_found
@@ -378,13 +424,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRefExprVarDecl,
     HandleRvalueMemberExprVarDecl,
     HandleIntegerLiteralVarDecl,
+    HandleLvalueDeclRefExprAssignment,
+    HandleLvalueMemberExprAssignment,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
     HandleRvalueLiteralUnaryOperator,
     HandleRvalueMemberExprAssignment,
-    HandleLvalueMemberExprRvalueDeclRefExprAssignment,
-    HandleLvalueMemberExprRvalueIntegerLiteralAssignment,
-    HandleRvalueBinaryOperatorDeclRefExprBinaryOperator,
+    HandleRvalueDeclRefExprBinaryOperator,
+    HandleRvalueMemberExprBinaryOperator,
     HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator,
     HandleCompareOperator,
     HandleDeclRefExprReturnStmt,
