@@ -107,6 +107,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       capture_record_type
     ).bind("rvalue");
 
+  auto capture_declstmt = hasParent(varDecl(
+      hasParent(declStmt( // 文法破壊防止
+        unless(hasParent(forStmt())),
+        hasSingleDecl(varDecl())
+      ).bind("DeclStmt")),
+      hasTypeLoc(typeLoc().bind("lvalue_type"))
+    ).bind("lvalue"));
+
   auto change_lvalue = changeTo(
       node("lvalue"), 
       cat(
@@ -131,39 +139,30 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         "__trace_member_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ", ", node("record_type"), ")"
       )
     );
+  auto change_declstmt = changeTo(
+    after(node("DeclStmt")),
+    cat(" __trace_variable_declaration(", name("lvalue"), ", ", node("lvalue_type"), ");")
+  );
 
   // <DeclStmt>
   // 初期化パターンを網羅するのが難しい。特に構造体やループの中の変数宣言
   // FIXME: 2つ目の変数を拾えてない
+  // FIXME: 初期化に使っている値を拾えてない
 /*
 |   |-DeclStmt 0x19db570 <line:42:5, col:13>
 |   | |-VarDecl 0x19da3d0 <col:5, col:9> col:9 used x 'int'
 |   | `-VarDecl 0x19db4f0 <col:5, col:12> col:12 used y 'int'
 */
-  auto HandleDeclStmt = makeRule(
-    declStmt(
-      unless(hasParent(forStmt())), // 文法破壊防止
-      forEach(varDecl(
-        hasTypeLoc(typeLoc().bind("lvalue_type"))
-      ).bind("lvalue"))
-    ).bind("insert_point"),
-    {
-      // 右辺の書き換えは別のルールに任せる
-      changeTo(
-        node("insert_point"),
-        cat(node("insert_point"), " __trace_variable_declaration(")
-      ),
-      changeTo(
-        node("lvalue"),
-        cat(name("lvalue"), ", ")
-      ),
-      changeTo(
-        after(node("insert_point")),
-        cat(node("lvalue_type"), ");")
-      ),
-    },
-    declaration_found("HandleDeclStmt")
-  );
+  // auto HandleDeclStmt = makeRule(
+  //   declStmt(
+  //     unless(hasParent(forStmt())), // 文法破壊防止
+  //     forEach(varDecl(
+  //       hasTypeLoc(typeLoc().bind("lvalue_type"))
+  //     ).bind("lvalue"))
+  //   ).bind("insert_point"),
+  //   {},
+  //   declaration_found("HandleDeclStmt")
+  // );
 
 /*
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
@@ -175,11 +174,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRefExprVarDecl = makeRule(
       declRefExpr(
         hasParent(implicitCastExpr(
-          hasParent(varDecl())
+          capture_declstmt
         )),
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
-      change_rvalue,
+      {
+        change_declstmt,
+        change_rvalue,
+      },
       declaration_found("HandleRefExprVarDecl")
     );
 
@@ -191,9 +193,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto HandleIntegerLiteralVarDecl = makeRule(
       expr(integerLiteral(
-        hasParent(varDecl())
+        capture_declstmt
       )).bind("rvalue"),
-      change_rvalue_const_int,
+      {
+        change_declstmt,
+        change_rvalue_const_int,
+      },
       declaration_found("HandleIntegerLiteralVarDecl")
     );
 
@@ -201,11 +206,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueMemberExprVarDecl = makeRule(
       expr(
         hasParent(implicitCastExpr(
-          hasParent(varDecl())
+          capture_declstmt
         )),
         capture_memberexpr_rvalue
       ),
       {
+        change_declstmt,
         changeTo(
           node("rvalue"), 
           cat(
@@ -216,8 +222,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueMemberExprVarDecl")
     );
 
-  // <VarDecl <CallExpr>>
+  // TODO: <VarDecl <CallExpr>>
   // NOTE: 関数の戻り値をトラックすれば省略可能
+
+  // TODO: <VarDecl <UnaryOperator <DeclRefExpr>>>
 
   // <AssingnOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
@@ -420,7 +428,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   return applyFirst({
     HandleTraceFunctionCall, // 無意味
-    HandleDeclStmt,
     HandleRefExprVarDecl,
     HandleRvalueMemberExprVarDecl,
     HandleIntegerLiteralVarDecl,
