@@ -164,18 +164,26 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   //   declaration_found("HandleDeclStmt")
   // );
 
-/*
+/* (1)
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
 |   | `-VarDecl 0x14a2558 <col:5, col:13> col:9 used z 'int' cinit
 |   |   `-ImplicitCastExpr 0x14a25e0 <col:13> 'int' <LValueToRValue>
 |   |     `-DeclRefExpr 0x14a25c0 <col:13> 'int' lvalue Var 0x14a2308 'x' 'int'
 */
+/* (2)
+|   |-DeclStmt 0xc216d8 <line:24:5, col:38>
+|   | `-VarDecl 0xc215f8 <col:5, col:37> col:18 used z 'unsigned int' cinit
+|   |   `-CStyleCastExpr 0xc216b0 <col:22, col:37> 'unsigned int' <IntegralCast>
+|   |     `-ImplicitCastExpr 0xc21698 <col:37> 'int' <LValueToRValue> part_of_explicit_cast
+|   |       `-DeclRefExpr 0xc21660 <col:37> 'int' lvalue Var 0xc1e730 'x' 'int'
+*/
   // <VarDecl <DeclRefExpr>>
   auto HandleRefExprVarDecl = makeRule(
       declRefExpr(
-        hasParent(implicitCastExpr(
-          capture_declstmt
-        )),
+        anyOf(
+          /* (1) */ hasParent(implicitCastExpr(capture_declstmt)),
+          /* (2) */ hasParent(implicitCastExpr(hasParent(cStyleCastExpr(capture_declstmt))))
+        ),
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
       {
@@ -184,6 +192,30 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       },
       declaration_found("HandleRefExprVarDecl")
     );
+
+  // <VarDecl <MemberExpr <DeclRefExpr>>>
+  auto HandleRvalueMemberExprVarDecl = makeRule(
+      expr(
+        anyOf(
+          /* (1) */ hasParent(implicitCastExpr(capture_declstmt)),
+          /* (2) */ hasParent(implicitCastExpr(hasParent(cStyleCastExpr(capture_declstmt))))
+        ),
+        capture_memberexpr_rvalue
+      ),
+      {
+        change_declstmt,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
+          )
+        ), 
+      },
+      assignment_found("HandleRvalueMemberExprVarDecl")
+    );
+
+  // TODO: <VarDecl <CallExpr>>
+  // NOTE: 関数の戻り値をトラックすれば省略可能
 
   // <VarDecl <IntegerLiteral>>
 /*
@@ -202,30 +234,16 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       declaration_found("HandleIntegerLiteralVarDecl")
     );
 
-  // <VarDecl <MemberExpr <DeclRefExpr>>>
-  auto HandleRvalueMemberExprVarDecl = makeRule(
-      expr(
-        hasParent(implicitCastExpr(
-          capture_declstmt
-        )),
-        capture_memberexpr_rvalue
-      ),
-      {
-        change_declstmt,
-        changeTo(
-          node("rvalue"), 
-          cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
-          )
-        ), 
-      },
-      assignment_found("HandleRvalueMemberExprVarDecl")
-    );
-
-  // TODO: <VarDecl <CallExpr>>
-  // NOTE: 関数の戻り値をトラックすれば省略可能
-
   // TODO: <VarDecl <UnaryOperator <DeclRefExpr>>>
+/* (2)
+|   |-DeclStmt 0xa306a0 <line:42:5, col:24>
+|   | `-VarDecl 0xa30600 <col:5, col:23> col:18 used q 'struct pair *' cinit
+|   |   `-UnaryOperator 0xa30688 <col:22, col:23> 'struct pair *' prefix '&' cannot overflow
+|   |     `-DeclRefExpr 0xa30668 <col:23> 'struct pair':'struct pair' lvalue Var 0xa2f280 'p' 'struct pair':'struct pair'
+*/
+
+  // TODO: <VarDecl <UnaryOperator <MemberExpr>>>
+
 
   // <AssingnOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
