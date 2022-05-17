@@ -115,6 +115,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       hasTypeLoc(typeLoc().bind("lvalue_type"))
     ).bind("lvalue"));
 
+  auto capture_assign_operator = binaryOperator(
+      anyOf(
+        isAssignmentOperator(),
+        hasAnyOperatorName("+=", "-=")
+      )
+    );
+
   auto change_lvalue = changeTo(
       node("lvalue"), 
       cat(
@@ -136,33 +143,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto change_member_lvalue = changeTo(
       node("lvalue"), 
       cat(
-        "__trace_member_lvalue(", node("lvalue"), ", ", name("lvalue_type"), ", ", node("record_type"), ")"
+        "__trace_member_lvalue(", node("lvalue"), ", ", node("lvalue_type"), ", ", node("record_type"), ")"
       )
     );
   auto change_declstmt = changeTo(
     after(node("DeclStmt")),
     cat(" __trace_variable_declaration(", name("lvalue"), ", ", node("lvalue_type"), ");")
   );
-
-  // <DeclStmt>
-  // 初期化パターンを網羅するのが難しい。特に構造体やループの中の変数宣言
-  // FIXME: 2つ目の変数を拾えてない
-  // FIXME: 初期化に使っている値を拾えてない
-/*
-|   |-DeclStmt 0x19db570 <line:42:5, col:13>
-|   | |-VarDecl 0x19da3d0 <col:5, col:9> col:9 used x 'int'
-|   | `-VarDecl 0x19db4f0 <col:5, col:12> col:12 used y 'int'
-*/
-  // auto HandleDeclStmt = makeRule(
-  //   declStmt(
-  //     unless(hasParent(forStmt())), // 文法破壊防止
-  //     forEach(varDecl(
-  //       hasTypeLoc(typeLoc().bind("lvalue_type"))
-  //     ).bind("lvalue"))
-  //   ).bind("insert_point"),
-  //   {},
-  //   declaration_found("HandleDeclStmt")
-  // );
 
 /* (1)
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
@@ -234,18 +221,116 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       declaration_found("HandleIntegerLiteralVarDecl")
     );
 
-  // TODO: <VarDecl <UnaryOperator <DeclRefExpr>>>
-/* (2)
+  // <VarDecl <UnaryOperator <DeclRefExpr>>>
+/*
 |   |-DeclStmt 0xa306a0 <line:42:5, col:24>
 |   | `-VarDecl 0xa30600 <col:5, col:23> col:18 used q 'struct pair *' cinit
 |   |   `-UnaryOperator 0xa30688 <col:22, col:23> 'struct pair *' prefix '&' cannot overflow
 |   |     `-DeclRefExpr 0xa30668 <col:23> 'struct pair':'struct pair' lvalue Var 0xa2f280 'p' 'struct pair':'struct pair'
 */
+  auto HandleUnaryOperatorRefExprVarDecl = makeRule(
+      unaryOperator(
+        hasOperatorName("&"),
+        capture_declstmt,
+        hasUnaryOperand(declRefExpr(
+          to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
+        ))
+      ).bind("rvalue"),
+      {
+        change_declstmt,
+        change_rvalue,
+      },
+      declaration_found("HandleUnaryOperatorRefExprVarDecl")
+    );
 
-  // TODO: <VarDecl <UnaryOperator <MemberExpr>>>
+  // <VarDecl <UnaryOperator <MemberExpr>>>
+/*
+|   |-DeclStmt 0x1c57578 <line:71:5, col:31>
+|   | `-VarDecl 0x1c57460 <col:5, col:25> col:10 y 'int *' cinit
+|   |   `-UnaryOperator 0x1c57560 <col:14, col:25> 'int *' prefix '&' cannot overflow
+|   |     `-MemberExpr 0x1c57530 <col:15, col:25> 'int' lvalue .length 0x1c55f48
+|   |       `-MemberExpr 0x1c57500 <col:15, col:18> 'struct (unnamed struct at bad.c:53:5)':'struct header::(unnamed at bad.c:53:5)' lvalue ->nested 0x1c561b8
+|   |         `-ImplicitCastExpr 0x1c574e8 <col:15> 'struct header *' <LValueToRValue>
+|   |           `-DeclRefExpr 0x1c574c8 <col:15> 'struct header *' lvalue Var 0x1c56c40 'h' 'struct header *'
+*/
+  auto HandleUnaryOperatorMemberExprVarDecl = makeRule(
+      unaryOperator(
+        hasOperatorName("&"),
+        capture_declstmt,
+        hasUnaryOperand(capture_memberexpr_rvalue)
+      ).bind("rvalue"),
+      {
+        change_declstmt,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
+          )
+        ), 
+      },
+      assignment_found("HandleUnaryOperatorMemberExprVarDecl")
+    );
 
+  // <VarDecl <ArraySubscriptExpr>>
+/*
+|   |-DeclStmt 0x1650218 <line:83:5, col:30>
+|   | `-VarDecl 0x1650120 <col:5, col:29> col:18 x 'unsigned int' cinit
+|   |   `-ImplicitCastExpr 0x1650200 <col:22, col:29> 'unsigned int' <LValueToRValue>
+|   |     `-ArraySubscriptExpr 0x16501e0 <col:22, col:29> 'unsigned int' lvalue
+|   |       |-ImplicitCastExpr 0x16501c8 <col:22> 'unsigned int *' <ArrayToPointerDecay>
+|   |       | `-DeclRefExpr 0x1650188 <col:22> 'unsigned int[3]' lvalue Var 0x164fea0 'array' 'unsigned int[3]'
+|   |       `-IntegerLiteral 0x16501a8 <col:28> 'int' 1
+*/
+  auto HandleArraySubscriptExprVarDecl = makeRule(
+      arraySubscriptExpr(
+        hasParent(implicitCastExpr(capture_declstmt)),
+        hasBase(__capture_record_type), 
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue"),
+      {
+        change_declstmt,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
+          )
+        ),
+      },
+      declaration_found("HandleArraySubscriptExprVarDecl")
+    );
 
-  // <AssingnOperator <DeclRefExpr> <???>>
+  // <VarDecl <UnaryOperator <ArraySubscriptExpr>>>
+/*
+|   `-DeclStmt 0x1c57fe0 <line:82:5, col:23>
+|     `-VarDecl 0x1c57ee8 <col:5, col:22> col:10 y 'int *' cinit
+|       `-UnaryOperator 0x1c57fc8 <col:14, col:22> 'int *' prefix '&' cannot overflow
+|         `-ArraySubscriptExpr 0x1c57fa8 <col:15, col:22> 'int' lvalue
+|           |-ImplicitCastExpr 0x1c57f90 <col:15> 'int *' <ArrayToPointerDecay>
+|           | `-DeclRefExpr 0x1c57f50 <col:15> 'int[3]' lvalue Var 0x1c57ba0 'array' 'int[3]'
+|           `-IntegerLiteral 0x1c57f70 <col:21> 'int' 0
+*/
+  auto HandleUnaryOperatorArraySubscriptExprVarDecl = makeRule(
+      unaryOperator(
+        hasOperatorName("&"),
+        capture_declstmt,
+        hasUnaryOperand(arraySubscriptExpr(
+          hasBase(__capture_record_type), 
+          hasType(qualType().bind("rvalue_type"))
+        ))
+      ).bind("rvalue"),
+      {
+        change_declstmt,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
+          )
+        ),
+      },
+      declaration_found("HandleUnaryOperatorArraySubscriptExprVarDecl")
+    );
+
+  // <AssignOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
   auto HandleLvalueDeclRefExprAssignment = makeRule(
       expr(
@@ -265,6 +350,34 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       ),
       change_member_lvalue,
       assignment_found("HandleLvalueMemberExprAssignment")
+    );
+
+  // 配列への代入
+  // lvalueのみ扱う
+/*
+|   |-BinaryOperator 0x1003068 <line:82:5, col:16> 'int' '='
+|   | |-ArraySubscriptExpr 0x1003028 <col:5, col:12> 'int' lvalue
+|   | | |-ImplicitCastExpr 0x1003010 <col:5> 'int *' <ArrayToPointerDecay>
+|   | | | `-DeclRefExpr 0x1002fd0 <col:5> 'int[3]' lvalue Var 0x1002e80 'array' 'int[3]'
+|   | | `-IntegerLiteral 0x1002ff0 <col:11> 'int' 0
+|   | `-IntegerLiteral 0x1003048 <col:16> 'int' 1
+*/
+  auto HandleLvalueArraySubscriptExprAssignment = makeRule(
+      expr(
+        hasParent(binaryOperator(isAssignmentOperator())),
+        arraySubscriptExpr(
+          hasBase(__capture_record_type),
+          hasType(qualType().bind("lvalue_type"))
+        )
+      ).bind("lvalue"),
+      // change_member_lvalue,
+        changeTo(
+        node("lvalue"), 
+        cat(
+          "__trace_member_lvalue(", node("lvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
+        )
+      ),
+      assignment_found("HandleLvalueArraySubscriptExprAssignment")
     );
 
   // <???> = <DeclRefExpr>;
@@ -289,16 +402,19 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | |   `-DeclRefExpr 0x2015648 <col:5> 'struct pair *' lvalue Var 0x2014300 'q' 'struct pair *'
 |   | `-IntegerLiteral 0x20156b0 <col:12> 'int' 1
 */
+/*
+|   |-BinaryOperator 0x1381a28 <line:27:5, col:9> 'unsigned int' '='
+|   | |-DeclRefExpr 0x13819d0 <col:5> 'unsigned int' lvalue Var 0x1381820 'z' 'unsigned int'
+|   | `-ImplicitCastExpr 0x1381a10 <col:9> 'unsigned int' <IntegralCast>
+|   |   `-IntegerLiteral 0x13819f0 <col:9> 'int' 0
+*/
   auto HandleRvalueLiteralAssignment = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
-        hasParent(binaryOperator(
-          anyOf(
-            isAssignmentOperator(),
-            hasAnyOperatorName("+=", "-=")
-          )
-        )),
-        integerLiteral()
+        integerLiteral(anyOf(
+          hasParent(capture_assign_operator),
+          hasParent(implicitCastExpr(hasParent(capture_assign_operator)))
+        ))
       ).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueLiteralAssignment")
@@ -368,6 +484,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueDeclRefExprBinaryOperator")
     );
 
+  // <BinaryOperator <MemberExpr> ...>
+  // rvalue をハンドルするのみ
 /*
 |   `-DeclStmt 0x8cc178 <line:37:5, col:22>
 |     `-VarDecl 0x8cc020 <col:5, col:21> col:9 z 'int' cinit
@@ -399,7 +517,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator")
     );
 
-  // TODO: 構造体メンバーへのアクセスありのBinaryOperator
+  // TODO: 配列への代入
+
+
   // TODO: 関数呼び出しありの代入
 
   // <BinaryOperator <DeclRefExpr> ...>
@@ -446,19 +566,28 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   return applyFirst({
     HandleTraceFunctionCall, // 無意味
+    
     HandleRefExprVarDecl,
     HandleRvalueMemberExprVarDecl,
     HandleIntegerLiteralVarDecl,
+    HandleUnaryOperatorRefExprVarDecl,
+    HandleUnaryOperatorMemberExprVarDecl,
+    HandleArraySubscriptExprVarDecl,
+    HandleUnaryOperatorArraySubscriptExprVarDecl,
+    
     HandleLvalueDeclRefExprAssignment,
     HandleLvalueMemberExprAssignment,
+    HandleLvalueArraySubscriptExprAssignment,
     HandleRvalueDeclRefExprAssignment,
     HandleRvalueLiteralAssignment,
-    HandleRvalueLiteralUnaryOperator,
     HandleRvalueMemberExprAssignment,
+
+    HandleRvalueLiteralUnaryOperator,
     HandleRvalueDeclRefExprBinaryOperator,
     HandleRvalueMemberExprBinaryOperator,
     HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator,
     HandleCompareOperator,
+
     HandleDeclRefExprReturnStmt,
     HandleIntegerLiteralReturnStmt,
   });
