@@ -20,6 +20,16 @@
 #include <iostream>
 
 namespace clang {
+namespace ast_matchers {
+
+AST_MATCHER(VarDecl, isRegister) {
+  return Node.getStorageClass() == SC_Register;
+}
+
+}
+}
+
+namespace clang {
 namespace tidy {
 namespace misc {
 
@@ -45,12 +55,19 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     cat("Trace function found 🤫")
   );
 
+/* (a) 
+|   |-DeclStmt 0x1b86a20 <line:105:5, col:19>
+|   | `-VarDecl 0x1b869b8 <col:5, col:18> col:18 used i 'int' register
+*/
   auto capture_declrefexpr_lvalue = declRefExpr(
-        to(varDecl(hasTypeLoc(typeLoc().bind("lvalue_type"))))
+        to(varDecl(
+          /* (a) */ unless(isRegister()),
+          hasTypeLoc(typeLoc().bind("lvalue_type"))
+        ))
       ).bind("lvalue");
   auto capture_declrefexpr_rvalue = ignoringImpCasts(declRefExpr(anyOf(
         // 一時変数
-        to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+        to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
         // 関数引数
         to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       )).bind("rvalue"));
@@ -93,13 +110,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto __capture_record_type = ignoringImpCasts(declRefExpr(to(varDecl(hasTypeLoc(typeLoc().bind("record_type"))))));
   auto capture_record_type = anyOf(
-      // /* (1) */ __capture_record_type,
       /* (1) */ memberExpr(has(__capture_record_type)),
       /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
       /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
     );
   auto capture_memberexpr_lvalue = memberExpr(
-      member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
+      member(fieldDecl(hasType(qualType().bind("lvalue_type")))),
       capture_record_type
     ).bind("lvalue");
   auto capture_memberexpr_rvalue = memberExpr(
@@ -122,16 +138,21 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )
     );
 
+/* バグる例：
+    char *element, *end;
+    __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
+                                       ~~~~~~~~~~ 型じゃない
+*/
   auto change_lvalue = changeTo(
       node("lvalue"), 
       cat(
-        "__trace_variable_lvalue(", node("lvalue"), ", ", node("lvalue_type"), ")"
+        "__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
       )
     );
   auto change_rvalue = changeTo(
       node("rvalue"), 
       cat(
-        "__trace_variable_rvalue(", node("rvalue"), ", ", node("rvalue_type"), ")"
+        "__trace_variable_rvalue(", node("rvalue"), ", (", node("rvalue_type"), "))"
       )
     );
   auto change_rvalue_const_int = changeTo(
@@ -143,13 +164,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto change_member_lvalue = changeTo(
       node("lvalue"), 
       cat(
-        "__trace_member_lvalue(", node("lvalue"), ", ", node("lvalue_type"), ", ", node("record_type"), ")"
+        "__trace_member_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))"
       )
     );
   auto change_declstmt = changeTo(
     after(node("DeclStmt")),
-    cat(" __trace_variable_declaration(", name("lvalue"), ", ", node("lvalue_type"), ");")
+    cat(" __trace_variable_declaration(", name("lvalue"), ", (", node("lvalue_type"), "));")
   );
+
+  auto add_include = addInclude("trace.h");
 
 /* (1)
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
@@ -176,6 +199,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       {
         change_declstmt,
         change_rvalue,
+        add_include,
       },
       declaration_found("HandleRefExprVarDecl")
     );
@@ -197,6 +221,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
             "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
           )
         ), 
+        add_include,
       },
       assignment_found("HandleRvalueMemberExprVarDecl")
     );
@@ -210,13 +235,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     | `-VarDecl 0x157d128 <col:5, col:13> col:9 used x 'int' cinit
     |   `-IntegerLiteral 0x157d190 <col:13> 'int' 3
 */
+/* (a)
+|   `-DeclStmt 0x1b815d8 <line:30:5, col:24>
+|     `-VarDecl 0x1b81550 <col:5, col:23> col:16 init 'int' static cinit
+|       `-IntegerLiteral 0x1b815b8 <col:23> 'int' 1
+*/
   auto HandleIntegerLiteralVarDecl = makeRule(
       expr(integerLiteral(
+        /* (a) */ hasParent(varDecl(unless(isStaticLocal()))),
         capture_declstmt
       )).bind("rvalue"),
       {
         change_declstmt,
         change_rvalue_const_int,
+        add_include,
       },
       declaration_found("HandleIntegerLiteralVarDecl")
     );
@@ -239,6 +271,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       {
         change_declstmt,
         change_rvalue,
+        add_include,
       },
       declaration_found("HandleUnaryOperatorRefExprVarDecl")
     );
@@ -267,6 +300,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
             "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
           )
         ), 
+        add_include,
       },
       assignment_found("HandleUnaryOperatorMemberExprVarDecl")
     );
@@ -295,6 +329,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
             "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
           )
         ),
+        add_include,
       },
       declaration_found("HandleArraySubscriptExprVarDecl")
     );
@@ -326,6 +361,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
             "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
           )
         ),
+        add_include,
       },
       declaration_found("HandleUnaryOperatorArraySubscriptExprVarDecl")
     );
@@ -337,7 +373,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasParent(binaryOperator(isAssignmentOperator())),
         capture_declrefexpr_lvalue
       ),
-      change_lvalue,
+      {
+        change_lvalue,
+        add_include,
+      },
       assignment_found("HandleLvalueDeclRefExprAssignment")
     );
 
@@ -370,13 +409,16 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           hasType(qualType().bind("lvalue_type"))
         )
       ).bind("lvalue"),
-      // change_member_lvalue,
+      {
+        // change_member_lvalue,
         changeTo(
-        node("lvalue"), 
-        cat(
-          "__trace_member_lvalue(", node("lvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
-        )
-      ),
+          node("lvalue"), 
+          cat(
+            "__trace_member_lvalue(", node("lvalue"), ", ", "FIXME", ", (", node("record_type"), "))"
+          )
+        ),
+        add_include,
+      },
       assignment_found("HandleLvalueArraySubscriptExprAssignment")
     );
 
@@ -388,7 +430,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasParent(binaryOperator(isAssignmentOperator())),
         capture_declrefexpr_rvalue
       ),
-      change_rvalue,
+      {
+        change_rvalue,
+        add_include,
+      },
       assignment_found("HandleRvalueDeclRefExprAssignment")
     );
 
@@ -416,7 +461,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           hasParent(implicitCastExpr(hasParent(capture_assign_operator)))
         ))
       ).bind("rvalue"),
-      change_rvalue_const_int,
+      {
+        change_rvalue_const_int,
+        add_include,
+      },
       assignment_found("HandleRvalueLiteralAssignment")
     );
 
@@ -430,14 +478,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasOperatorName("++"),
         has(capture_declrefexpr_lvalue)
       ).bind("expr"),
-      changeTo(
-        node("expr"),
-        cat(
-          "__trace_variable_lvalue(", node("lvalue"), ", ", node("lvalue_type"), ")"
-          " += ",
-          "__trace_variable_rvalue(1, const int)"
-        )
-      ),
+      {
+        changeTo(
+          node("expr"),
+          cat(
+            "(__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
+            " += ",
+            "__trace_variable_rvalue(1, const int))"
+          )
+        ),
+        add_include,
+      },
       cat("<DeclRefExpr>++ found")
     );
 
@@ -461,14 +512,31 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         )),
         capture_memberexpr_rvalue
       ),
-      changeTo(
-        node("rvalue"), 
-        cat(
-          "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
-        )
-      ), 
+      {
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_member_rvalue(", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))"
+          )
+        ),
+        add_include,
+      },
       assignment_found("HandleRvalueMemberExprAssignment")
     );
+
+/*
+|   `-SwitchStmt 0x7a1a78 <line:106:5, line:109:5>
+|     |-ImplicitCastExpr 0x7a1a60 <line:106:13> 'int' <LValueToRValue>
+|     | `-DeclRefExpr 0x7a1a40 <col:13> 'int' lvalue Var 0x7a19a0 'x' 'int'
+|     `-CompoundStmt 0x7a1b48 <col:16, line:109:5>
+|       `-CaseStmt 0x7a1b18 <line:107:9, line:108:13>
+|         |-ConstantExpr 0x7a1b00 <line:107:14, col:18> 'int'
+|         | `-BinaryOperator 0x7a1ae0 <col:14, col:18> 'int' '+'
+|         |   |-IntegerLiteral 0x7a1aa0 <col:14> 'int' 1
+|         |   `-IntegerLiteral 0x7a1ac0 <col:18> 'int' 3
+|         `-BreakStmt 0x7a1b40 <line:108:13>
+*/
+  auto is_not_in_case = unless(hasParent(constantExpr(hasParent(caseStmt()))));
 
   // <BinaryOperator <DeclRefExpr> ...>
   // rvalue のみchangeTo
@@ -476,11 +544,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueDeclRefExprBinaryOperator = makeRule(
       declRefExpr(
         hasParent(implicitCastExpr(
-          hasParent(binaryOperator(unless(isAssignmentOperator())))
+          hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
         )),
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
-      change_rvalue,
+      {
+        change_rvalue,
+        add_include,
+      },
       assignment_found("HandleRvalueDeclRefExprBinaryOperator")
     );
 
@@ -500,24 +571,47 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueMemberExprBinaryOperator = makeRule(
       expr(
         hasParent(implicitCastExpr(
-          hasParent(binaryOperator(unless(isAssignmentOperator())))
+          hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
         )),
         capture_memberexpr_rvalue
       ),
-      change_rvalue,
+      {
+        change_rvalue,
+        add_include,
+      },
       assignment_found("HandleRvalueMemberExprBinaryOperator")
     );
 
   // <BinaryOperator <IntegerLiteral> ...>
   auto HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator = makeRule(
       expr(integerLiteral(
-        hasParent(binaryOperator(unless(isAssignmentOperator())))
+        hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
       )).bind("rvalue"),
-      change_rvalue_const_int,
+      {
+        change_rvalue_const_int,
+        add_include,
+      },
       assignment_found("HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator")
     );
 
-  // TODO: 配列への代入
+  // TODO: <BinaryOperator <ArraySubscriptExpr> ...>
+/*
+|   `-DeclStmt 0x21b9618 <line:86:5, col:32>
+|     `-VarDecl 0x21b9440 <col:5, col:31> col:9 z 'int' cinit
+|       `-ImplicitCastExpr 0x21b9600 <col:13, col:31> 'int' <IntegralCast>
+|         `-BinaryOperator 0x21b95e0 <col:13, col:31> 'unsigned int' '+'
+|           |-ImplicitCastExpr 0x21b95b0 <col:13, col:20> 'unsigned int' <LValueToRValue>
+|           | `-ArraySubscriptExpr 0x21b9500 <col:13, col:20> 'unsigned int' lvalue
+|           |   |-ImplicitCastExpr 0x21b94e8 <col:13> 'unsigned int *' <ArrayToPointerDecay>
+|           |   | `-DeclRefExpr 0x21b94a8 <col:13> 'unsigned int[3]' lvalue Var 0x21b8f70 'array' 'unsigned int[3]'
+|           |   `-IntegerLiteral 0x21b94c8 <col:19> 'int' 0
+|           `-ImplicitCastExpr 0x21b95c8 <col:24, col:31> 'unsigned int' <LValueToRValue>
+|             `-ArraySubscriptExpr 0x21b9590 <col:24, col:31> 'unsigned int' lvalue
+|               |-ImplicitCastExpr 0x21b9560 <col:24> 'unsigned int *' <ArrayToPointerDecay>
+|               | `-DeclRefExpr 0x21b9520 <col:24> 'unsigned int[3]' lvalue Var 0x21b8f70 'array' 'unsigned int[3]'
+|               `-ImplicitCastExpr 0x21b9578 <col:30> 'unsigned int' <LValueToRValue>
+|                 `-DeclRefExpr 0x21b9540 <col:30> 'unsigned int' lvalue Var 0x21b91f0 'x' 'unsigned int'
+*/
 
 
   // TODO: 関数呼び出しありの代入
@@ -528,12 +622,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isComparisonOperator(),
         hasAnyOperatorName("||", "&&")
       )).bind("expr"),
-      changeTo(
-        node("expr"), 
-        cat(
-          "__trace_condition(", node("expr"), ")"
-        )
-      ),
+      {
+        changeTo(
+          node("expr"), 
+          cat(
+            "__trace_condition(", node("expr"), ")"
+          )
+        ),
+        add_include,
+      },
       compare_found
     );
 
@@ -542,14 +639,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       returnStmt(hasReturnValue(ignoringImpCasts(declRefExpr(
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue")))),
-      change_rvalue,
+      {
+        change_rvalue,
+        add_include,
+      },
       cat("Function return statement found 📢")
     );
 
   // <ReturnStmt <IntegerLiteral>>
   auto HandleIntegerLiteralReturnStmt = makeRule(
       returnStmt(hasReturnValue(expr(integerLiteral()).bind("rvalue"))),
-      change_rvalue_const_int,
+      {
+        change_rvalue_const_int,
+        add_include,
+      },
       cat("Function return statement found 📢")
     );
 
