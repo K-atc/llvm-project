@@ -13,7 +13,7 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Transformer/RangeSelector.h" // node("hoge"), name("hoge")
-#include "clang/Tooling/Transformer/RewriteRule.h"
+#include "clang/Tooling/Transformer/RewriteRule.h" // addInclude()
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -26,8 +26,12 @@ AST_MATCHER(VarDecl, isRegister) {
   return Node.getStorageClass() == SC_Register;
 }
 
+AST_MATCHER(Expr, isInMacro) {
+  return Node.getBeginLoc().isMacroID();
 }
-}
+
+} // namespace clang
+} // namespace ast_matchers
 
 namespace clang {
 namespace tidy {
@@ -115,7 +119,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
     );
   auto capture_memberexpr_lvalue = memberExpr(
-      member(fieldDecl(hasType(qualType().bind("lvalue_type")))),
+      member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
       capture_record_type
     ).bind("lvalue");
   auto capture_memberexpr_rvalue = memberExpr(
@@ -162,7 +166,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )
     );
   auto change_member_lvalue = changeTo(
-      node("lvalue"), 
+      node("lvalue"),
       cat(
         "__trace_member_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))"
       )
@@ -218,7 +222,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
+            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", (", node("record_type"), "))"
           )
         ), 
         add_include,
@@ -297,7 +301,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", name("rvalue_type"), ", ", node("record_type"), ")"
+            "__trace_member_rvalue(", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))"
           )
         ), 
         add_include,
@@ -326,7 +330,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
+            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", (", node("record_type"), "))"
           )
         ),
         add_include,
@@ -358,7 +362,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         changeTo(
           node("rvalue"), 
           cat(
-            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", ", node("record_type"), ")"
+            "__trace_member_rvalue(", node("rvalue"), ", ", "FIXME", ", (", node("record_type"), "))"
           )
         ),
         add_include,
@@ -368,9 +372,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <AssignOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
+  // FIXME: マクロの場合は無視
   auto HandleLvalueDeclRefExprAssignment = makeRule(
       expr(
-        hasParent(binaryOperator(isAssignmentOperator())),
+        unless(isInMacro()),
+        hasParent(binaryOperator(
+          hasLHS(declRefExpr()),
+          isAssignmentOperator()
+        )),
         capture_declrefexpr_lvalue
       ),
       {
@@ -384,7 +393,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   // lvalue をハンドルするのみ
   auto HandleLvalueMemberExprAssignment = makeRule(
       expr(
-        hasParent(binaryOperator(isAssignmentOperator())),
+        hasParent(binaryOperator(
+          hasLHS(memberExpr()),
+          isAssignmentOperator()
+        )),
         capture_memberexpr_lvalue
       ),
       change_member_lvalue,
@@ -427,7 +439,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueDeclRefExprAssignment = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
-        hasParent(binaryOperator(isAssignmentOperator())),
+        unless(isInMacro()),
+        hasParent(binaryOperator(
+          hasRHS(ignoringImpCasts(declRefExpr())),
+          isAssignmentOperator()
+        )),
         capture_declrefexpr_rvalue
       ),
       {
@@ -536,15 +552,18 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |         |   `-IntegerLiteral 0x7a1ac0 <col:18> 'int' 3
 |         `-BreakStmt 0x7a1b40 <line:108:13>
 */
-  auto is_not_in_case = unless(hasParent(constantExpr(hasParent(caseStmt()))));
+  auto is_not_in_case = unless(hasAncestor(caseStmt()));
+  auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
+  auto is_not_in_vardecl = unless(hasAncestor(varDecl())); // e.g. int array[1+2]
 
   // <BinaryOperator <DeclRefExpr> ...>
   // rvalue のみchangeTo
-  // TODO: HandleCompareOperator が優先されてこのルールによるfixが無視される
   auto HandleRvalueDeclRefExprBinaryOperator = makeRule(
       declRefExpr(
+        is_not_in_case,
+        unless(isInMacro()),
         hasParent(implicitCastExpr(
-          hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
+          hasParent(binaryOperator(unless(isAssignmentOperator())))
         )),
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
@@ -570,8 +589,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto HandleRvalueMemberExprBinaryOperator = makeRule(
       expr(
+        is_not_in_case,
         hasParent(implicitCastExpr(
-          hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
+          hasParent(binaryOperator(unless(isAssignmentOperator())))
         )),
         capture_memberexpr_rvalue
       ),
@@ -583,15 +603,21 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     );
 
   // <BinaryOperator <IntegerLiteral> ...>
-  auto HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator = makeRule(
+  auto HandleIntegerLiteralBinaryOperator = makeRule(
       expr(integerLiteral(
-        hasParent(binaryOperator(is_not_in_case, unless(isAssignmentOperator())))
+        unless(hasAncestor(fieldDecl())), // e.g. struct { int array[16 + 0]; }
+        is_not_in_case,
+        is_not_in_initlistexpr,
+        is_not_in_vardecl,
+        hasParent(binaryOperator(
+          unless(isAssignmentOperator())
+        ))
       )).bind("rvalue"),
       {
         change_rvalue_const_int,
         add_include,
       },
-      assignment_found("HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator")
+      assignment_found("HandleIntegerLiteralBinaryOperator")
     );
 
   // TODO: <BinaryOperator <ArraySubscriptExpr> ...>
@@ -688,7 +714,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRvalueLiteralUnaryOperator,
     HandleRvalueDeclRefExprBinaryOperator,
     HandleRvalueMemberExprBinaryOperator,
-    HandleRvalueBinaryOperatorIntegerLiteralBinaryOperator,
+    HandleIntegerLiteralBinaryOperator,
     HandleCompareOperator,
 
     HandleDeclRefExprReturnStmt,

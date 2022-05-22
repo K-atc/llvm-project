@@ -334,7 +334,7 @@ def main():
   return_code = 0
   try:
     # Spin up a bunch of tidy-launching threads.
-    task_queue = queue.Queue(max_task)
+    task_queue = queue.Queue()
     # List of files with a non-zero return code.
     failed_files = []
     lock = threading.Lock()
