@@ -13,7 +13,7 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Transformer/RangeSelector.h" // node("hoge"), name("hoge")
-#include "clang/Tooling/Transformer/RewriteRule.h" // addInclude()
+#include "clang/Tooling/Transformer/RewriteRule.h" // changeTo(), addInclude()
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -176,7 +176,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     cat(" __trace_variable_declaration(", name("lvalue"), ", (", node("lvalue_type"), "));")
   );
 
-  auto add_include = addInclude("trace.h");
+  auto add_include = addInclude("trace.h", IncludeFormat::Angled);
 
 /* (1)
 |   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
