@@ -145,6 +145,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )
     );
 
+  auto is_not_in_case = unless(hasAncestor(caseStmt()));
+  auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
+  auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
+  auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(isStaticLocal())));
+  auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
+  auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
+  auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
+
 /* バグる例：
     char *element, *end;
     __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
@@ -247,18 +255,18 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |     `-VarDecl 0x1b81550 <col:5, col:23> col:16 init 'int' static cinit
 |       `-IntegerLiteral 0x1b815b8 <col:23> 'int' 1
 */
-  auto HandleIntegerLiteralVarDecl = makeRule(
-      expr(integerLiteral(
-        /* (a) */ hasParent(varDecl(unless(isStaticLocal()))),
-        hasParent(capture_declstmt)
-      )).bind("rvalue"),
-      {
-        // change_declstmt,
-        change_rvalue_const_int,
-        add_include,
-      },
-      declaration_found("HandleIntegerLiteralVarDecl")
-    );
+  // auto HandleIntegerLiteralVarDecl = makeRule(
+  //     expr(integerLiteral(
+  //       /* (a) */ hasParent(varDecl(is_not_in_static_vardecl)),
+  //       hasParent(capture_declstmt)
+  //     )).bind("rvalue"),
+  //     {
+  //       // change_declstmt,
+  //       change_rvalue_const_int,
+  //       add_include,
+  //     },
+  //     declaration_found("HandleIntegerLiteralVarDecl")
+  //   );
 
   // <VarDecl <UnaryOperator <DeclRefExpr>>>
 /*
@@ -457,21 +465,21 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
-  auto HandleRvalueDeclRefExprAssignment = makeRule(
+  auto HandleRvalueDeclRefExpr = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
         unless(isInMacro()),
-        hasParent(binaryOperator(
-          hasRHS(ignoringImpCasts(declRefExpr())),
-          isAssignmentOperator()
-        )),
+        // hasParent(binaryOperator(
+        //   hasRHS(ignoringImpCasts(declRefExpr())),
+        //   isAssignmentOperator()
+        // )),
         capture_declrefexpr_rvalue
       ),
       {
         change_rvalue,
         add_include,
       },
-      assignment_found("HandleRvalueDeclRefExprAssignment")
+      assignment_found("HandleRvalueDeclRefExpr")
     );
 
   // <???> = <IntegerLiteral>
@@ -490,19 +498,26 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x1381a10 <col:9> 'unsigned int' <IntegralCast>
 |   |   `-IntegerLiteral 0x13819f0 <col:9> 'int' 0
 */
-  auto HandleRvalueLiteralAssignment = makeRule(
+  auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
-        integerLiteral(anyOf(
-          hasParent(capture_assign_operator),
-          hasParent(implicitCastExpr(hasParent(capture_assign_operator)))
-        ))
+        // integerLiteral(anyOf(
+        //   hasParent(capture_assign_operator),
+        //   hasParent(implicitCastExpr(hasParent(capture_assign_operator)))
+        // ))
+        integerLiteral(
+          is_not_in_case,
+          is_not_in_initlistexpr,
+          is_not_in_static_vardecl,
+          is_not_in_array_vardecl,
+          is_not_in_fielddecl
+        )
       ).bind("rvalue"),
       {
         change_rvalue_const_int,
         add_include,
       },
-      assignment_found("HandleRvalueLiteralAssignment")
+      assignment_found("HandleRvalueIntegerLiteral")
     );
 
   // <DeclRefExpr>++
@@ -510,7 +525,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |     |-UnaryOperator 0xcbd3d0 <col:28, col:29> 'int' postfix '++'
 |     | `-DeclRefExpr 0xcbd3b0 <col:28> 'int' lvalue Var 0xcbc1e8 'i' 'int'
 */
-  auto HandleRvalueLiteralUnaryOperator = makeRule(
+  auto HandleRvalueIntegerLiteralUnaryOperator = makeRule(
       unaryOperator(
         hasOperatorName("++"),
         has(capture_declrefexpr_lvalue)
@@ -573,10 +588,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |         |   `-IntegerLiteral 0x7a1ac0 <col:18> 'int' 3
 |         `-BreakStmt 0x7a1b40 <line:108:13>
 */
-  auto is_not_in_case = unless(hasAncestor(caseStmt()));
-  auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
-  auto is_not_in_vardecl = unless(hasAncestor(varDecl())); // e.g. int array[1+2]
-  auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
 
   // <BinaryOperator <DeclRefExpr> ...>
   // rvalue のみchangeTo
@@ -621,20 +632,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     );
 
   // <BinaryOperator <IntegerLiteral> ...>
-  auto HandleIntegerLiteralBinaryOperator = makeRule(
-      expr(integerLiteral(
-        unless(hasAncestor(fieldDecl())), // e.g. struct { int array[16 + 0]; }
-        is_not_in_case,
-        is_not_in_initlistexpr,
-        is_not_in_vardecl, // FIXME: int y = f(2) + 3; がスルーされる
-        is_binary_operator
-      )).bind("rvalue"),
-      {
-        change_rvalue_const_int,
-        add_include,
-      },
-      assignment_found("HandleIntegerLiteralBinaryOperator")
-    );
+  // auto HandleIntegerLiteralBinaryOperator = makeRule(
+  //     expr(integerLiteral(
+  //       is_not_in_fielddecl, // e.g. struct { int array[16 + 0]; }
+  //       is_not_in_case,
+  //       is_not_in_initlistexpr,
+  //       is_not_in_vardecl, // FIXME: int y = f(2) + 3; がスルーされる
+  //       is_binary_operator
+  //     )).bind("rvalue"),
+  //     {
+  //       change_rvalue_const_int,
+  //       add_include,
+  //     },
+  //     assignment_found("HandleIntegerLiteralBinaryOperator")
+  //   );
 
   // TODO: <BinaryOperator <ArraySubscriptExpr> ...>
 /*
@@ -760,7 +771,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       stmt(
         unless(implicitCastExpr()),
         unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay)))),
-        hasAncestor(callExpr())
+        hasParent(callExpr())
       ).bind("argument"),
       {
         changeTo(before(node("argument")), cat("__trace_function_call_param(")),
@@ -925,10 +936,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleFunctionDecl3,
     HandleFunctionDecl2,
     HandleFunctionDecl1,
-   
+
+    // HandleEachArgumentCallExpr, // __trace_variable_rvalue と両立しない。Chekerを分けて2回めのlintで適用しようかな
+    HandleCallExpr,
+  
     HandleRefExprVarDecl,
     HandleRvalueMemberExprVarDecl,
-    HandleIntegerLiteralVarDecl,
+    // HandleIntegerLiteralVarDecl,
     HandleUnaryOperatorRefExprVarDecl,
     HandleUnaryOperatorMemberExprVarDecl,
     HandleArraySubscriptExprVarDecl,
@@ -938,22 +952,19 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleLvalueDeclRefExprAssignment,
     HandleLvalueMemberExprAssignment,
     HandleLvalueArraySubscriptExprAssignment,
-    HandleRvalueDeclRefExprAssignment,
-    HandleRvalueLiteralAssignment,
+    HandleRvalueDeclRefExpr,
+    HandleRvalueIntegerLiteral,
     HandleRvalueMemberExprAssignment,
 
-    HandleRvalueLiteralUnaryOperator,
+    HandleRvalueIntegerLiteralUnaryOperator,
     HandleRvalueDeclRefExprBinaryOperator,
     HandleRvalueMemberExprBinaryOperator,
-    HandleIntegerLiteralBinaryOperator,
+    // HandleIntegerLiteralBinaryOperator,
     HandleCompareOperator,
 
     HandleDeclRefExprReturnStmt,
     HandleIntegerLiteralReturnStmt,
     HandleReturnStmt,
-
-    HandleCallExpr,
-    HandleEachArgumentCallExpr,
   });
 }
 
