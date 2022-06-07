@@ -47,6 +47,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
   auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };
   auto compare_found = cat("Compare found 🏆");
+  auto function_found = [](auto rule_name) { return cat("Function declaration found 🎈 (", rule_name, ")"); };
 
   // __trace_??? 関数呼び出し内ではマッチさせない
   // => マクロなので関数として認識されない！
@@ -129,6 +130,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     ).bind("rvalue");
 
   auto capture_declstmt = varDecl(
+      isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
       hasParent(declStmt( // 文法破壊防止
         unless(hasParent(forStmt())),
         hasSingleDecl(varDecl())
@@ -202,7 +204,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
       ).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         change_rvalue,
         add_include,
       },
@@ -219,7 +221,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         capture_memberexpr_rvalue
       ),
       {
-        change_declstmt,
+        // change_declstmt,
         changeTo(
           node("rvalue"), 
           cat(
@@ -251,7 +253,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasParent(capture_declstmt)
       )).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         change_rvalue_const_int,
         add_include,
       },
@@ -274,7 +276,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ))
       ).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         change_rvalue,
         add_include,
       },
@@ -298,7 +300,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasUnaryOperand(capture_memberexpr_rvalue)
       ).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         changeTo(
           node("rvalue"), 
           cat(
@@ -327,7 +329,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         changeTo(
           node("rvalue"), 
           cat(
@@ -359,7 +361,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ))
       ).bind("rvalue"),
       {
-        change_declstmt,
+        // change_declstmt,
         changeTo(
           node("rvalue"), 
           cat(
@@ -729,23 +731,201 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |           `-DeclRefExpr 0x152d5a8 <col:20> 'int' lvalue Var 0x152d430 'y' 'int'
 */
   auto HandleCallExpr = makeRule(
-      callExpr(forEachArgumentWithParam(
-        expr().bind("Argument"),
-        parmVarDecl().bind("Param")
-      )),
+      callExpr().bind("caller"),
       {
-        changeTo(before(node("Argument")), cat("__trace_function_call_param(")),
-        changeTo(after(node("Argument")), cat(", ", name("Param"), ")")),
+        changeTo(before(node("caller")), cat("__trace_function_call(")),
+        changeTo(after(node("caller")), cat(")")),
         add_include,
       },
       cat("HandleCallExpr")
     );
+  // auto HandleEachArgumentCallExpr = makeRule(
+  //     callExpr(
+  //       isExpansionInMainFile(),
+  //       forEachArgumentWithParam(
+  //         expr().bind("argument"),
+  //         parmVarDecl()
+  //       )
+  //     ).bind("caller"),
+  //     {
+  //       changeTo(before(node("caller")), cat("__trace_function_call(")),
+  //       changeTo(after(node("caller")), cat(")")),
+  //       changeTo(before(node("argument")), cat("__trace_function_call_param(")),
+  //       changeTo(after(node("argument")), cat(")")),
+  //       add_include,
+  //     },
+  //     cat("HandleEachArgumentCallExpr")
+  //   );
+  auto HandleEachArgumentCallExpr = makeRule(
+      stmt(
+        unless(implicitCastExpr()),
+        unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay)))),
+        hasAncestor(callExpr())
+      ).bind("argument"),
+      {
+        changeTo(before(node("argument")), cat("__trace_function_call_param(")),
+        changeTo(after(node("argument")), cat(")")),
+        add_include,
+      },
+      cat("HandleEachArgumentCallExpr")
+    );
+
+
+/*
+|-FunctionDecl 0x20dc9e0 <line:7:1, line:9:1> line:7:5 used add 'int (int, int)'
+| |-ParmVarDecl 0x20dc880 <col:9, col:13> col:13 used x 'int'
+| |-ParmVarDecl 0x20dc900 <col:16, col:20> col:20 used y 'int'
+| `-CompoundStmt 0x20dcb30 <col:23, line:9:1>
+|   `-ReturnStmt 0x20dcb20 <line:8:5, col:16>
+*/
+  auto capture_body = hasBody(compoundStmt().bind("body"));
+  auto capture_paramvardecl = [](unsigned N) { 
+      return hasParameter(
+        N,
+        parmVarDecl(
+          hasTypeLoc(typeLoc().bind("param_type" + std::to_string(N)))
+        ).bind("param" + std::to_string(N))
+      );
+    };
+  auto change_paramvardecl = [](unsigned N) { 
+      return changeTo(
+        before(node("body")),
+        cat(
+          "__trace_function_param_decl(",
+          name("param" + std::to_string(N)),
+          ", ",
+          name("param_type" + std::to_string(N)),
+          "); "
+        )
+      );
+    };
+  auto change_paramvardecl_begin = changeTo(before(node("body")), cat("{ __trace_function_call_enter(); "));
+  auto change_paramvardecl_terminal = changeTo(after(node("body")), cat(" }"));
+  auto HandleFunctionDecl1 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl1")
+    );
+  auto HandleFunctionDecl2 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl2")
+    );
+  auto HandleFunctionDecl3 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl3")
+    );
+  auto HandleFunctionDecl4 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl4")
+    );
+  auto HandleFunctionDecl5 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl5")
+    );
+  auto HandleFunctionDecl6 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl6")
+    );
 
   return applyFirst({
-    HandleTraceFunctionCall, // 無意味
+    // HandleTraceFunctionCall, // 無意味
 
-    HandleCallExpr,
-    
+    HandleFunctionDecl6,
+    HandleFunctionDecl5,
+    HandleFunctionDecl4,
+    HandleFunctionDecl3,
+    HandleFunctionDecl2,
+    HandleFunctionDecl1,
+   
     HandleRefExprVarDecl,
     HandleRvalueMemberExprVarDecl,
     HandleIntegerLiteralVarDecl,
@@ -771,6 +951,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleDeclRefExprReturnStmt,
     HandleIntegerLiteralReturnStmt,
     HandleReturnStmt,
+
+    HandleCallExpr,
+    HandleEachArgumentCallExpr,
   });
 }
 
