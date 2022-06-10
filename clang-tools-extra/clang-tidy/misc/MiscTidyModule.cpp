@@ -10,6 +10,7 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "DefinitionsInHeadersCheck.h"
+#include "FunctionCallTracingCheck.h"
 #include "MisleadingBidirectional.h"
 #include "MisleadingIdentifier.h"
 #include "MisplacedConstCheck.h"
@@ -36,6 +37,8 @@ public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<DefinitionsInHeadersCheck>(
         "misc-definitions-in-headers");
+    CheckFactories.registerCheck<FunctionCallTracingCheck>(
+        "misc-function-call-tracing");
     CheckFactories.registerCheck<MisleadingBidirectionalCheck>(
         "misc-misleading-bidirectional");
     CheckFactories.registerCheck<MisleadingIdentifierCheck>(
