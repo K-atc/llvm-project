@@ -201,137 +201,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
 
-/* (1)
-|   |-DeclStmt 0x14a25f8 <line:29:5, col:14>
-|   | `-VarDecl 0x14a2558 <col:5, col:13> col:9 used z 'int' cinit
-|   |   `-ImplicitCastExpr 0x14a25e0 <col:13> 'int' <LValueToRValue>
-|   |     `-DeclRefExpr 0x14a25c0 <col:13> 'int' lvalue Var 0x14a2308 'x' 'int'
-*/
-/* (2)
-|   |-DeclStmt 0xc216d8 <line:24:5, col:38>
-|   | `-VarDecl 0xc215f8 <col:5, col:37> col:18 used z 'unsigned int' cinit
-|   |   `-CStyleCastExpr 0xc216b0 <col:22, col:37> 'unsigned int' <IntegralCast>
-|   |     `-ImplicitCastExpr 0xc21698 <col:37> 'int' <LValueToRValue> part_of_explicit_cast
-|   |       `-DeclRefExpr 0xc21660 <col:37> 'int' lvalue Var 0xc1e730 'x' 'int'
-*/
-  // <VarDecl <DeclRefExpr>>
-  // auto HandleDeclRefExprVarDecl = makeRule(
-  //     declRefExpr(
-  //       unless(is_referenced_value),
-  //       anyOf(
-  //         /* (1) */ hasParent(implicitCastExpr(hasParent(capture_declstmt))),
-  //         /* (2) */ hasParent(implicitCastExpr(hasParent(cStyleCastExpr(hasParent(capture_declstmt)))))
-  //       ),
-  //       to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-  //     ).bind("rvalue"),
-  //     {
-  //       // change_declstmt,
-  //       change_rvalue,
-  //       add_include,
-  //     },
-  //     declaration_found("HandleDeclRefExprVarDecl")
-  //   );
-
-  // <VarDecl <MemberExpr <DeclRefExpr>>>
-  // auto HandleRvalueMemberExprVarDecl = makeRule(
-  //     expr(
-  //       anyOf(
-  //         /* (1) */ hasParent(implicitCastExpr(hasParent(capture_declstmt))),
-  //         /* (2) */ hasParent(implicitCastExpr(hasParent(cStyleCastExpr(hasParent(capture_declstmt)))))
-  //       ),
-  //       capture_memberexpr_rvalue
-  //     ),
-  //     {
-  //       // change_declstmt,
-  //       changeTo(
-  //         node("rvalue"), 
-  //         cat(
-  //           "__trace_member_rvalue(", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))"
-  //         )
-  //       ), 
-  //       add_include,
-  //     },
-  //     assignment_found("HandleRvalueMemberExprVarDecl")
-  //   );
-
-  // TODO: <VarDecl <CallExpr>>
-  // NOTE: 関数の戻り値をトラックすれば省略可能
-
-  // <VarDecl <IntegerLiteral>>
-/*
-    |-DeclStmt 0x157d1b0 <line:52:5, col:14>
-    | `-VarDecl 0x157d128 <col:5, col:13> col:9 used x 'int' cinit
-    |   `-IntegerLiteral 0x157d190 <col:13> 'int' 3
-*/
-/* (a)
-|   `-DeclStmt 0x1b815d8 <line:30:5, col:24>
-|     `-VarDecl 0x1b81550 <col:5, col:23> col:16 init 'int' static cinit
-|       `-IntegerLiteral 0x1b815b8 <col:23> 'int' 1
-*/
-  // auto HandleIntegerLiteralVarDecl = makeRule(
-  //     expr(integerLiteral(
-  //       /* (a) */ hasParent(varDecl(is_not_in_static_vardecl)),
-  //       hasParent(capture_declstmt)
-  //     )).bind("rvalue"),
-  //     {
-  //       // change_declstmt,
-  //       change_rvalue_const_int,
-  //       add_include,
-  //     },
-  //     declaration_found("HandleIntegerLiteralVarDecl")
-  //   );
-
-  // <VarDecl <UnaryOperator <DeclRefExpr>>>
-/*
-|   |-DeclStmt 0xa306a0 <line:42:5, col:24>
-|   | `-VarDecl 0xa30600 <col:5, col:23> col:18 used q 'struct pair *' cinit
-|   |   `-UnaryOperator 0xa30688 <col:22, col:23> 'struct pair *' prefix '&' cannot overflow
-|   |     `-DeclRefExpr 0xa30668 <col:23> 'struct pair':'struct pair' lvalue Var 0xa2f280 'p' 'struct pair':'struct pair'
-*/
-  // auto HandleUnaryOperatorRefExprVarDecl = makeRule(
-  //     unaryOperator(
-  //       hasOperatorName("&"),
-  //       hasParent(capture_declstmt),
-  //       hasUnaryOperand(declRefExpr(
-  //         to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-  //       ))
-  //     ).bind("rvalue"),
-  //     {
-  //       // change_declstmt,
-  //       change_rvalue,
-  //       add_include,
-  //     },
-  //     declaration_found("HandleUnaryOperatorRefExprVarDecl")
-  //   );
-
-  // <VarDecl <UnaryOperator <MemberExpr>>>
-/*
-|   |-DeclStmt 0x1c57578 <line:71:5, col:31>
-|   | `-VarDecl 0x1c57460 <col:5, col:25> col:10 y 'int *' cinit
-|   |   `-UnaryOperator 0x1c57560 <col:14, col:25> 'int *' prefix '&' cannot overflow
-|   |     `-MemberExpr 0x1c57530 <col:15, col:25> 'int' lvalue .length 0x1c55f48
-|   |       `-MemberExpr 0x1c57500 <col:15, col:18> 'struct (unnamed struct at bad.c:53:5)':'struct header::(unnamed at bad.c:53:5)' lvalue ->nested 0x1c561b8
-|   |         `-ImplicitCastExpr 0x1c574e8 <col:15> 'struct header *' <LValueToRValue>
-|   |           `-DeclRefExpr 0x1c574c8 <col:15> 'struct header *' lvalue Var 0x1c56c40 'h' 'struct header *'
-*/
-  // auto HandleUnaryOperatorRvalueMemberExprVarDecl = makeRule(
-  //     unaryOperator(
-  //       hasOperatorName("&"),
-  //       hasUnaryOperand(capture_memberexpr_rvalue)
-  //     ).bind("expr"),
-  //     {
-  //       // change_declstmt,
-  //       changeTo(
-  //         node("expr"), 
-  //         cat(
-  //           "__trace_member_rvalue(", node("expr"), ", (", name("rvalue_type"), "), (", node("record_type"), "))"
-  //         )
-  //       ), 
-  //       add_include,
-  //     },
-  //     assignment_found("HandleUnaryOperatorRvalueMemberExprVarDecl")
-  //   );
-
   // <VarDecl <ArraySubscriptExpr>>
 /*
 |   |-DeclStmt 0x1650218 <line:83:5, col:30>
@@ -515,10 +384,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
-        // integerLiteral(anyOf(
-        //   hasParent(capture_assign_operator),
-        //   hasParent(implicitCastExpr(hasParent(capture_assign_operator)))
-        // ))
         integerLiteral(
           is_not_in_case,
           is_not_in_initlistexpr,
@@ -614,99 +479,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueMemberExpr")
     );
 
-/*
-|   `-SwitchStmt 0x7a1a78 <line:106:5, line:109:5>
-|     |-ImplicitCastExpr 0x7a1a60 <line:106:13> 'int' <LValueToRValue>
-|     | `-DeclRefExpr 0x7a1a40 <col:13> 'int' lvalue Var 0x7a19a0 'x' 'int'
-|     `-CompoundStmt 0x7a1b48 <col:16, line:109:5>
-|       `-CaseStmt 0x7a1b18 <line:107:9, line:108:13>
-|         |-ConstantExpr 0x7a1b00 <line:107:14, col:18> 'int'
-|         | `-BinaryOperator 0x7a1ae0 <col:14, col:18> 'int' '+'
-|         |   |-IntegerLiteral 0x7a1aa0 <col:14> 'int' 1
-|         |   `-IntegerLiteral 0x7a1ac0 <col:18> 'int' 3
-|         `-BreakStmt 0x7a1b40 <line:108:13>
-*/
-
-  // <BinaryOperator <DeclRefExpr> ...>
-  // rvalue のみchangeTo
-  // auto HandleRvalueDeclRefExprBinaryOperator = makeRule(
-  //     declRefExpr(
-  //       is_not_in_case,
-  //       unless(isInMacro()),
-  //       is_binary_operator,
-  //       to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-  //     ).bind("rvalue"),
-  //     {
-  //       change_rvalue,
-  //       add_include,
-  //     },
-  //     assignment_found("HandleRvalueDeclRefExprBinaryOperator")
-  //   );
-
-  // <BinaryOperator <MemberExpr> ...>
-  // rvalue をハンドルするのみ
-/*
-|   `-DeclStmt 0x8cc178 <line:37:5, col:22>
-|     `-VarDecl 0x8cc020 <col:5, col:21> col:9 z 'int' cinit
-|       `-BinaryOperator 0x8cc158 <col:13, col:21> 'int' '+'
-|         |-ImplicitCastExpr 0x8cc128 <col:13, col:15> 'int' <LValueToRValue>
-|         | `-MemberExpr 0x8cc0a8 <col:13, col:15> 'int' lvalue .a 0x8c8548
-|         |   `-DeclRefExpr 0x8cc088 <col:13> 'struct pair':'struct pair' lvalue Var 0x8cb9a0 'p' 'struct pair':'struct pair'
-|         `-ImplicitCastExpr 0x8cc140 <col:19, col:21> 'int' <LValueToRValue>
-|           `-MemberExpr 0x8cc0f8 <col:19, col:21> 'int' lvalue .b 0x8c85b0
-|             `-DeclRefExpr 0x8cc0d8 <col:19> 'struct pair':'struct pair' lvalue Var 0x8cb9a0 'p' 'struct pair':'struct pair'
-*/
-  // auto HandleRvalueMemberExprBinaryOperator = makeRule(
-  //     expr(
-  //       is_not_in_case,
-  //       is_binary_operator,
-  //       capture_memberexpr_rvalue
-  //     ),
-  //     {
-  //       change_rvalue,
-  //       add_include,
-  //     },
-  //     assignment_found("HandleRvalueMemberExprBinaryOperator")
-  //   );
-
-  // <BinaryOperator <IntegerLiteral> ...>
-  // auto HandleIntegerLiteralBinaryOperator = makeRule(
-  //     expr(integerLiteral(
-  //       is_not_in_fielddecl, // e.g. struct { int array[16 + 0]; }
-  //       is_not_in_case,
-  //       is_not_in_initlistexpr,
-  //       is_not_in_vardecl, // FIXME: int y = f(2) + 3; がスルーされる
-  //       is_binary_operator
-  //     )).bind("rvalue"),
-  //     {
-  //       change_rvalue_const_int,
-  //       add_include,
-  //     },
-  //     assignment_found("HandleIntegerLiteralBinaryOperator")
-  //   );
-
-  // TODO: <BinaryOperator <ArraySubscriptExpr> ...>
-/*
-|   `-DeclStmt 0x21b9618 <line:86:5, col:32>
-|     `-VarDecl 0x21b9440 <col:5, col:31> col:9 z 'int' cinit
-|       `-ImplicitCastExpr 0x21b9600 <col:13, col:31> 'int' <IntegralCast>
-|         `-BinaryOperator 0x21b95e0 <col:13, col:31> 'unsigned int' '+'
-|           |-ImplicitCastExpr 0x21b95b0 <col:13, col:20> 'unsigned int' <LValueToRValue>
-|           | `-ArraySubscriptExpr 0x21b9500 <col:13, col:20> 'unsigned int' lvalue
-|           |   |-ImplicitCastExpr 0x21b94e8 <col:13> 'unsigned int *' <ArrayToPointerDecay>
-|           |   | `-DeclRefExpr 0x21b94a8 <col:13> 'unsigned int[3]' lvalue Var 0x21b8f70 'array' 'unsigned int[3]'
-|           |   `-IntegerLiteral 0x21b94c8 <col:19> 'int' 0
-|           `-ImplicitCastExpr 0x21b95c8 <col:24, col:31> 'unsigned int' <LValueToRValue>
-|             `-ArraySubscriptExpr 0x21b9590 <col:24, col:31> 'unsigned int' lvalue
-|               |-ImplicitCastExpr 0x21b9560 <col:24> 'unsigned int *' <ArrayToPointerDecay>
-|               | `-DeclRefExpr 0x21b9520 <col:24> 'unsigned int[3]' lvalue Var 0x21b8f70 'array' 'unsigned int[3]'
-|               `-ImplicitCastExpr 0x21b9578 <col:30> 'unsigned int' <LValueToRValue>
-|                 `-DeclRefExpr 0x21b9540 <col:30> 'unsigned int' lvalue Var 0x21b91f0 'x' 'unsigned int'
-*/
-
-
-  // TODO: 関数呼び出しありの代入
-
   // <BinaryOperator <DeclRefExpr> ...>
   auto HandleCompareOperator = makeRule(
       binaryOperator(anyOf(
@@ -725,39 +497,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       compare_found
     );
 
-  // <ReturnStmt <DeclRefExpr>>
-  // auto HandleDeclRefExprReturnStmt = makeRule(
-  //     returnStmt(hasReturnValue(ignoringImpCasts(declRefExpr(
-  //       to(varDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-  //     ).bind("rvalue")))),
-  //     {
-  //       change_rvalue,
-  //       add_include,
-  //     },
-  //     return_found("HandleDeclRefExprReturnStmt")
-  //   );
-
-  // <ReturnStmt <IntegerLiteral>>
-  // auto HandleIntegerLiteralReturnStmt = makeRule(
-  //     returnStmt(hasReturnValue(expr(integerLiteral()).bind("rvalue"))),
-  //     {
-  //       change_rvalue_const_int,
-  //       add_include,
-  //     },
-  //     return_found("HandleIntegerLiteralReturnStmt")
-  //   );
-
-  // TODO: <ReturnStmt <BinaryOperation>>
-
-  // TODO: <ReturnStmt <構造体>>
-/*
-|   `-ReturnStmt 0x8c5440 <line:29:5, col:19>
-|     `-ImplicitCastExpr 0x8c5428 <col:12, col:19> 'int' <LValueToRValue>
-|       `-MemberExpr 0x8c53f8 <col:12, col:19> 'int' lvalue ->result 0x8c4c30
-|         `-ImplicitCastExpr 0x8c53e0 <col:12> 'struct Param *' <LValueToRValue>
-|           `-DeclRefExpr 0x8c53c0 <col:12> 'struct Param *' lvalue ParmVar 0x8c4d30 'param' 'struct Param *'
-*/
-
   // <ReturnStmt>
   auto HandleReturnStmt = makeRule(
       returnStmt(hasReturnValue(expr().bind("ReturnValue"))),
@@ -772,11 +511,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   return applyFirst({
     // HandleTraceFunctionCall, // 無意味
 
-    // HandleDeclRefExprVarDecl,
-    // HandleRvalueMemberExprVarDecl,
-    // HandleIntegerLiteralVarDecl,
-    // HandleUnaryOperatorRefExprVarDecl,
-    // HandleUnaryOperatorRvalueMemberExprVarDecl,
     HandleVarDecl,
 
     HandleCompareOperator,
@@ -795,8 +529,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleLvalueMemberExpr,
     HandleLvalueDeclRefExpr,
 
-    // HandleDeclRefExprReturnStmt,
-    // HandleIntegerLiteralReturnStmt,
     HandleReturnStmt,
   });
 }
