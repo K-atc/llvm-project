@@ -64,7 +64,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       hasCastKind(CK_LValueToRValue),
       hasCastKind(CK_ArrayToPointerDecay)
     )));
-  auto is_referenced_value = hasParent(unaryOperator(hasOperatorName("&")));
+  auto is_referenced_value = hasAncestor(unaryOperator(hasOperatorName("&")));
+  auto is_array_subscription = hasAncestor(arraySubscriptExpr());
 
 
   // __trace_??? 関数呼び出し内ではマッチさせない
@@ -176,18 +177,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
                                        ~~~~~~~~~~ 型じゃない
 */
-  auto change_lvalue = changeTo(
-      node("lvalue"), 
-      cat(
-        "__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
-      )
-    );
-  auto change_rvalue = changeTo(
-      node("rvalue"), 
-      cat(
-        "__trace_variable_rvalue(", node("rvalue"), ", (", node("rvalue_type"), "))"
-      )
-    );
   auto change_rvalue_const_int = changeTo(
       node("rvalue"), 
       cat(
@@ -211,26 +200,26 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |       | `-DeclRefExpr 0x1650188 <col:22> 'unsigned int[3]' lvalue Var 0x164fea0 'array' 'unsigned int[3]'
 |   |       `-IntegerLiteral 0x16501a8 <col:28> 'int' 1
 */
-  auto HandleRvalueArraySubscriptExpr = makeRule(
-      arraySubscriptExpr(
-        is_rvalue,
-        unless(is_referenced_value),
-        hasBase(__capture_record_type)
-        // hasType(type().bind("rvalue_type"))
-      ).bind("rvalue"),
-      {
-        changeTo(
-          before(node("rvalue")),
-          cat("__trace_member_rvalue(")
-        ),
-        changeTo(
-          after(node("rvalue")),
-          cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-        ),
-        add_include,
-      },
-      declaration_found("HandleRvalueArraySubscriptExpr")
-    );
+  // auto HandleRvalueArraySubscriptExpr = makeRule(
+  //     arraySubscriptExpr(
+  //       is_rvalue,
+  //       unless(is_referenced_value),
+  //       hasBase(__capture_record_type)
+  //       // hasType(type().bind("rvalue_type"))
+  //     ).bind("rvalue"),
+  //     {
+  //       changeTo(
+  //         before(node("rvalue")),
+  //         cat("__trace_member_rvalue(")
+  //       ),
+  //       changeTo(
+  //         after(node("rvalue")),
+  //         cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
+  //       ),
+  //       add_include,
+  //     },
+  //     declaration_found("HandleRvalueArraySubscriptExpr")
+  //   );
 
   // <VarDecl <UnaryOperator <ArraySubscriptExpr>>>
 /*
@@ -242,28 +231,28 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |           | `-DeclRefExpr 0x1c57f50 <col:15> 'int[3]' lvalue Var 0x1c57ba0 'array' 'int[3]'
 |           `-IntegerLiteral 0x1c57f70 <col:21> 'int' 0
 */
-  auto HandleRvalueReferenceArraySubscriptExpr = makeRule(
-      unaryOperator(
-        hasOperatorName("&"),
-        hasUnaryOperand(arraySubscriptExpr(
-          hasBase(__capture_record_type)
-        ))
-        // hasType(type().bind("rvalue_type"))
-      ).bind("rvalue"),
-      {
-        changeTo(
-          before(node("rvalue")),
-          cat("__trace_member_rvalue(")
-        ),
-        changeTo(
-          after(node("rvalue")),
-          cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-          // cat(", (", node("rvalue_type"), "), (", node("record_type"), "))")
-        ),
-        add_include,
-      },
-      declaration_found("HandleRvalueReferenceArraySubscriptExpr")
-    );
+  // auto HandleRvalueReferenceArraySubscriptExpr = makeRule(
+  //     unaryOperator(
+  //       hasOperatorName("&"),
+  //       hasUnaryOperand(arraySubscriptExpr(
+  //         hasBase(__capture_record_type)
+  //       ))
+  //       // hasType(type().bind("rvalue_type"))
+  //     ).bind("rvalue"),
+  //     {
+  //       changeTo(
+  //         before(node("rvalue")),
+  //         cat("__trace_member_rvalue(")
+  //       ),
+  //       changeTo(
+  //         after(node("rvalue")),
+  //         cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
+  //         // cat(", (", node("rvalue_type"), "), (", node("record_type"), "))")
+  //       ),
+  //       add_include,
+  //     },
+  //     declaration_found("HandleRvalueReferenceArraySubscriptExpr")
+  //   );
 
   // <VarDecl <CallExpr>>
 /*
@@ -288,10 +277,16 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleLvalueDeclRefExpr = makeRule(
       expr(
         unless(isInMacro()),
+        // unless(is_referenced_value),
         capture_declrefexpr_lvalue
       ),
       {
-        change_lvalue,
+        changeTo(
+          node("lvalue"), 
+          cat(
+            "__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
+          )
+        ),
         add_include,
       },
       assignment_found("HandleLvalueDeclRefExpr")
@@ -323,33 +318,33 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | | `-IntegerLiteral 0x1002ff0 <col:11> 'int' 0
 |   | `-IntegerLiteral 0x1003048 <col:16> 'int' 1
 */
-  auto HandleLvalueArraySubscriptExpr = makeRule(
-        arraySubscriptExpr(
-          unless(is_rvalue),
-          unless(is_referenced_value),
-          hasBase(__capture_record_type)
-          // hasType(type().bind("lvalue_type"))
-        ).bind("lvalue"),
-      {
-        changeTo(
-          before(node("lvalue")),
-          cat("__trace_member_lvalue(")
-        ),
-        changeTo(
-          after(node("lvalue")),
-          cat(", ", node("lvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-        ),
-        add_include,
-      },
-      assignment_found("HandleLvalueArraySubscriptExpr")
-    );
+  // auto HandleLvalueArraySubscriptExpr = makeRule(
+  //       arraySubscriptExpr(
+  //         unless(is_rvalue),
+  //         unless(is_referenced_value),
+  //         hasBase(__capture_record_type)
+  //         // hasType(type().bind("lvalue_type"))
+  //       ).bind("lvalue"),
+  //     {
+  //       changeTo(
+  //         before(node("lvalue")),
+  //         cat("__trace_member_lvalue(")
+  //       ),
+  //       changeTo(
+  //         after(node("lvalue")),
+  //         cat(", ", node("lvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
+  //       ),
+  //       add_include,
+  //     },
+  //     assignment_found("HandleLvalueArraySubscriptExpr")
+  //   );
 
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
       declRefExpr(
         unless(isInMacro()),
-        unless(is_referenced_value),
+        // unless(is_referenced_value),
         is_rvalue,
         anyOf(
           // 一時変数
@@ -359,7 +354,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         )
       ).bind("rvalue"),
       {
-        change_rvalue,
+        changeTo(
+          node("rvalue"), 
+          cat(
+            "__trace_variable_rvalue(", node("rvalue"), ", (", node("rvalue_type"), "))"
+          )
+        ),
         add_include,
       },
       assignment_found("HandleRvalueDeclRefExpr")
@@ -516,11 +516,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleCompareOperator,
 
     HandleLvalueRvalueIncrementDeclRefExpr,
-    HandleLvalueArraySubscriptExpr,
+    // HandleLvalueArraySubscriptExpr,
+
+    // TODO: &v. *v などのポインタ操作をたどるトレース関数
 
     // Rvalue の方が条件が厳しいので先にマッチング
-    HandleRvalueReferenceArraySubscriptExpr,
-    HandleRvalueArraySubscriptExpr,
+    // HandleRvalueReferenceArraySubscriptExpr,
+    // HandleRvalueArraySubscriptExpr,
     HandleRvalueMemberExpr,
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
