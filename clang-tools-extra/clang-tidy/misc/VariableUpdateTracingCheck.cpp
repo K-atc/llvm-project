@@ -30,6 +30,7 @@ AST_MATCHER(VarDecl, isRegister) {
 //   return Node.isLValue();
 // }
 
+// NOTE: rvalue な expr も暗黙に含む
 AST_MATCHER(Expr, isLValue) {
   return Node.isLValue();
 }
@@ -57,10 +58,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
   auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
-  auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };
   auto compare_found = cat("Compare found 🏆");
 
-  auto is_rvalue = hasParent(implicitCastExpr(anyOf(
+  auto is_lvalue = unless(hasAncestor(implicitCastExpr()));
+  auto is_rvalue = hasAncestor(implicitCastExpr(anyOf(
       hasCastKind(CK_LValueToRValue),
       hasCastKind(CK_ArrayToPointerDecay)
     )));
@@ -70,22 +71,22 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // __trace_??? 関数呼び出し内ではマッチさせない
   // => マクロなので関数として認識されない！
-  auto HandleTraceFunctionCall = makeRule(
-    callExpr(callee(functionDecl(hasAnyName(
-      "__trace_variable_declaration", 
-      "__trace_variable_lvalue",
-      "__trace_variable_rvalue"
-    )))).bind("expr"),
-    changeTo(node("expr"), cat(node("expr"))),
-    cat("Trace function found 🤫")
-  );
+  // auto HandleTraceFunctionCall = makeRule(
+  //   callExpr(callee(functionDecl(hasAnyName(
+  //     "__trace_variable_declaration", 
+  //     "__trace_variable_lvalue",
+  //     "__trace_variable_rvalue"
+  //   )))).bind("expr"),
+  //   changeTo(node("expr"), cat(node("expr"))),
+  //   cat("Trace function found 🤫")
+  // );
 
 /* (a) 
 |   |-DeclStmt 0x1b86a20 <line:105:5, col:19>
 |   | `-VarDecl 0x1b869b8 <col:5, col:18> col:18 used i 'int' register
 */
   auto capture_declrefexpr_lvalue = declRefExpr(
-        isLValue(), // rvalue な expr も暗黙に含む
+        isLValue(),
         to(varDecl(
           /* (a) */ unless(isRegister()),
           hasTypeLoc(typeLoc().bind("lvalue_type"))
@@ -137,25 +138,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
       /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
     );
-  auto capture_memberexpr_lvalue = memberExpr(
-      isLValue(), // rvalue な expr も暗黙に含む
-      member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
-      capture_record_type
-    ).bind("lvalue");
-  auto capture_memberexpr_rvalue = memberExpr(
-      is_rvalue,
-      member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-      capture_record_type
-    ).bind("rvalue");
-
-  auto capture_declstmt = varDecl(
-      isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
-      hasParent(declStmt( // 文法破壊防止
-        unless(hasParent(forStmt())),
-        hasSingleDecl(varDecl())
-      ).bind("DeclStmt")),
-      hasTypeLoc(typeLoc().bind("lvalue_type"))
-    ).bind("lvalue");
 
   auto capture_assign_operator = binaryOperator(
       anyOf(
@@ -171,22 +153,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
   auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
-
-/* バグる例：
-    char *element, *end;
-    __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
-                                       ~~~~~~~~~~ 型じゃない
-*/
-  auto change_rvalue_const_int = changeTo(
-      node("rvalue"), 
-      cat(
-        "__trace_variable_rvalue(", node("rvalue"), ", (", "const int", "))"
-      )
-    );
-  auto change_declstmt = changeTo(
-    after(node("DeclStmt")),
-    cat(" __trace_variable_declaration(", name("lvalue"), ", (", node("lvalue_type"), "));")
-  );
+  auto is_not_in_enum = unless(hasAncestor(enumConstantDecl()));
+  auto is_not_increment = unless(hasAncestor(unaryOperator(
+        hasAnyOperatorName("++", "--")
+      )));
 
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
 
@@ -264,9 +234,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |     `-IntegerLiteral 0xa18e80 <col:15> 'int' 1
 */
   auto HandleVarDecl = makeRule(
-      capture_declstmt,
+      varDecl(
+        isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
+        unless(isExpansionInSystemHeader()),
+        hasParent(declStmt( // 文法破壊防止
+          unless(hasParent(forStmt())),
+          hasSingleDecl(varDecl())
+        ).bind("DeclStmt")),
+        hasTypeLoc(typeLoc().bind("lvalue_type"))
+      ).bind("lvalue"),
       {
-        change_declstmt,
+        insertAfter(
+          node("DeclStmt"),
+          cat(" __trace_variable_declaration(", name("lvalue"), ", (", node("lvalue_type"), "));")
+        ),
         add_include,
       },
       declaration_found("HandleVarDecl")
@@ -277,15 +258,24 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleLvalueDeclRefExpr = makeRule(
       expr(
         unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         // unless(is_referenced_value),
+        unless(hasAncestor(memberExpr())),
+        isLValue(),
+        is_lvalue,
+        unless(hasAncestor(varDecl())),
+        is_not_increment,
         capture_declrefexpr_lvalue
       ),
       {
-        changeTo(
+        insertBefore(
           node("lvalue"), 
-          cat(
-            "__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
-          )
+          cat("__trace_variable_lvalue(")
+        ),
+        insertAfter(
+          node("lvalue"), 
+          cat(", (", node("lvalue_type"), "))")
         ),
         add_include,
       },
@@ -295,13 +285,24 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   // <MemberExpr> = <???>
   // lvalue をハンドルするのみ
   auto HandleLvalueMemberExpr = makeRule(
-      capture_memberexpr_lvalue,
+      memberExpr(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        isLValue(),
+        is_lvalue,
+        is_not_increment,
+        member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
+        capture_record_type
+      ).bind("lvalue"),
       {
-        changeTo(
+        insertBefore(
           node("lvalue"),
-          cat(
-            "__trace_member_lvalue(", node("lvalue"), ", ", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))"
-          )
+          cat("__trace_member_lvalue(")
+        ),
+        insertAfter(
+          node("lvalue"),
+          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))")
         ),
         add_include,
       },
@@ -344,8 +345,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueDeclRefExpr = makeRule(
       declRefExpr(
         unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         // unless(is_referenced_value),
         is_rvalue,
+        unless(hasAncestor(memberExpr())),
+        is_not_increment,
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
@@ -354,11 +359,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         )
       ).bind("rvalue"),
       {
-        changeTo(
+        insertBefore(
           node("rvalue"), 
-          cat(
-            "__trace_variable_rvalue(", node("rvalue"), ", (", node("rvalue_type"), "))"
-          )
+          cat("__trace_variable_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"), 
+          cat(", (", node("rvalue_type"), "))")
         ),
         add_include,
       },
@@ -384,16 +391,32 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         integerLiteral(
           is_not_in_case,
           is_not_in_initlistexpr,
           is_not_in_static_vardecl,
           is_not_in_array_vardecl,
-          is_not_in_fielddecl
+          is_not_in_fielddecl,
+          is_not_in_enum
         )
       ).bind("rvalue"),
       {
-        change_rvalue_const_int,
+/* バグる例：
+    char *element, *end;
+    __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
+                                       ~~~~~~~~~~ 型じゃない
+*/
+        insertBefore(
+          node("rvalue"), 
+          cat("__trace_variable_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"), 
+          cat(", (", "const int", "))")
+        ),
         add_include,
       },
       assignment_found("HandleRvalueIntegerLiteral")
@@ -406,6 +429,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto HandleRvalueStringLiteral = makeRule(
       expr(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         stringLiteral(
           is_not_in_static_vardecl,
           is_not_in_array_vardecl,
@@ -414,11 +440,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         )
       ).bind("rvalue"),
       {
-        changeTo(
+        insertBefore(
           node("rvalue"), 
-          cat(
-            "__trace_variable_rvalue(", node("rvalue"), ", ", node("rvalue_type"), ")"
-          )
+          cat("__trace_variable_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"), 
+          cat(", ", node("rvalue_type"), ")")
         ),
         add_include,
       },
@@ -432,6 +460,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto HandleLvalueRvalueIncrementDeclRefExpr = makeRule(
       unaryOperator(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         hasOperatorName("++"),
         has(capture_declrefexpr_lvalue)
       ).bind("expr"),
@@ -464,15 +495,24 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueMemberExpr = makeRule(
       // TODO: v += u を v = v + u に正規化
       expr(
-        // hasParent(implicitCastExpr(
-        //   hasParent(binaryOperator(isAssignmentOperator()))
-        // )),
-        capture_memberexpr_rvalue
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        memberExpr(
+          is_rvalue,
+          is_not_increment,
+          member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+          capture_record_type
+        ).bind("rvalue")
       ),
       {
-        changeTo(
+        insertBefore(
           node("rvalue"),
-          cat("__trace_member_rvalue(", node("rvalue"), ", ", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))")
+          cat("__trace_member_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"),
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))")
         ),
         add_include,
       },
@@ -481,10 +521,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <BinaryOperator <DeclRefExpr> ...>
   auto HandleCompareOperator = makeRule(
-      binaryOperator(anyOf(
-        isComparisonOperator(),
-        hasAnyOperatorName("||", "&&")
-      )).bind("expr"),
+      binaryOperator(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        anyOf(
+          isComparisonOperator(),
+          hasAnyOperatorName("||", "&&")
+        )
+      ).bind("expr"),
       {
         changeTo(
           node("expr"), 
@@ -497,17 +542,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       compare_found
     );
 
-  // <ReturnStmt>
-  auto HandleReturnStmt = makeRule(
-      returnStmt(hasReturnValue(expr().bind("ReturnValue"))),
-      {
-        changeTo(before(node("ReturnValue")), cat("__trace_function_return(")),
-        changeTo(after(node("ReturnValue")), cat(")")),
-        add_include,
-      },
-      return_found("HandleReturnStmt")
-    );
-
   return applyFirst({
     // HandleTraceFunctionCall, // 無意味
 
@@ -515,8 +549,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     HandleCompareOperator,
 
+    // TODO: インクリメント、デクリメントのハンドルが甘い
     HandleLvalueRvalueIncrementDeclRefExpr,
     // HandleLvalueArraySubscriptExpr,
+
+    // TODO: enum
 
     // TODO: &v. *v などのポインタ操作をたどるトレース関数
 
@@ -530,8 +567,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     HandleLvalueMemberExpr,
     HandleLvalueDeclRefExpr,
-
-    HandleReturnStmt,
   });
 }
 

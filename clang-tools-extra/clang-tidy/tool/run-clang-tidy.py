@@ -50,10 +50,7 @@ import tempfile
 import threading
 import traceback
 
-try:
-  import yaml
-except ImportError:
-  yaml = None
+import yaml
 
 
 def strtobool(val):
@@ -179,11 +176,11 @@ def apply_fixes(args, clang_apply_replacements_binary, tmpdir):
   """Calls clang-apply-fixes on a given directory."""
   invocation = [clang_apply_replacements_binary]
   if args.format:
-    invocation.append('-format')
+    invocation.append('--format')
   if args.style:
-    invocation.append('-style=' + args.style)
+    invocation.append('--style=' + args.style)
   invocation.append(tmpdir)
-  subprocess.call(invocation)
+  subprocess.call(invocation, env={"RUST_LOG": "info"})
 
 
 def run_tidy(args, clang_tidy_binary, tmpdir, build_path, queue, lock,
@@ -191,6 +188,7 @@ def run_tidy(args, clang_tidy_binary, tmpdir, build_path, queue, lock,
   """Takes filenames out of queue and runs clang-tidy on them."""
   while True:
     name = queue.get()
+    print("[*] name = {}".format(name), file=sys.stderr)
     invocation = get_tidy_invocation(name, clang_tidy_binary, args.checks,
                                      tmpdir, build_path, args.header_filter,
                                      args.allow_enabling_alpha_checkers,
@@ -299,6 +297,7 @@ def main():
       args.clang_apply_replacements_binary, "clang-apply-replacements",
       build_path)
     tmpdir = tempfile.mkdtemp()
+    print("[*] tmpdir = {}".format(tmpdir), file=sys.stderr)
 
   try:
     invocation = get_tidy_invocation("", clang_tidy_binary, args.checks,
@@ -322,11 +321,12 @@ def main():
   # Load the database and extract all files.
   database = json.load(open(os.path.join(build_path, db_path)))
   files = set([make_absolute(entry['file'], entry['directory'])
-           for entry in database])
+           for entry in database][4:50])
 
   max_task = args.j
   if max_task == 0:
     max_task = multiprocessing.cpu_count()
+  print("[*] max_task = {}".format(max_task), file=sys.stderr)
 
   # Build up a big regexy filter from all command line arguments.
   file_name_re = re.compile('|'.join(args.files))
@@ -358,13 +358,13 @@ def main():
   except KeyboardInterrupt:
     # This is a sad hack. Unfortunately subprocess goes
     # bonkers with ctrl-c and we start forking merrily.
-    print('\nCtrl-C detected, goodbye.')
+    print('\nCtrl-C detected, goodbye.', file=sys.stderr)
     if tmpdir:
       shutil.rmtree(tmpdir)
     os.kill(0, 9)
 
   if yaml and args.export_fixes:
-    print('Writing fixes to ' + args.export_fixes + ' ...')
+    print('Writing fixes to ' + args.export_fixes + ' ...', file=sys.stderr)
     try:
       merge_replacement_files(tmpdir, args.export_fixes)
     except:
@@ -373,7 +373,7 @@ def main():
       return_code=1
 
   if args.fix:
-    print('Applying fixes ...')
+    print('Applying fixes ...', file=sys.stderr)
     try:
       apply_fixes(args, clang_apply_replacements_binary, tmpdir)
     except:
@@ -381,8 +381,8 @@ def main():
       traceback.print_exc()
       return_code = 1
 
-  if tmpdir:
-    shutil.rmtree(tmpdir)
+  # if tmpdir:
+  #   shutil.rmtree(tmpdir)
   sys.exit(return_code)
 
 

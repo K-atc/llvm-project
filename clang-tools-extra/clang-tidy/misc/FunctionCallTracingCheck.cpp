@@ -21,6 +21,16 @@
 using namespace clang::ast_matchers;
 
 namespace clang {
+namespace ast_matchers {
+
+AST_MATCHER(Expr, isInMacro) {
+  return Node.getBeginLoc().isMacroID();
+}
+
+} // namespace clang
+} // namespace ast_matchers
+
+namespace clang {
 namespace tidy {
 namespace misc {
 
@@ -31,6 +41,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
 
   auto function_found = [](auto rule_name) { return cat("Function declaration found 🎈 (", rule_name, ")"); };
+  auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };
 
 /*
 |-FunctionDecl 0x20dc9e0 <line:7:1, line:9:1> line:7:5 used add 'int (int, int)'
@@ -49,8 +60,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       );
     };
   auto change_paramvardecl = [](unsigned N) { 
-      return changeTo(
-        before(node("body")),
+      return insertBefore(
+        node("body"),
         cat(
           "__trace_function_param_decl(",
           name("param" + std::to_string(N)),
@@ -60,11 +71,12 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         )
       );
     };
-  auto change_paramvardecl_begin = changeTo(before(node("body")), cat("{ __trace_function_call_enter(); "));
-  auto change_paramvardecl_terminal = changeTo(after(node("body")), cat(" }"));
+  auto change_paramvardecl_begin = insertBefore(node("body"), cat("{ __trace_function_call_enter(); "));
+  auto change_paramvardecl_terminal = insertAfter(node("body"), cat(" }"));
   auto HandleFunctionDecl1 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_body
       ),
@@ -79,6 +91,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionDecl2 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_body
@@ -95,6 +108,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionDecl3 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -113,6 +127,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionDecl4 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -133,6 +148,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionDecl5 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -155,6 +171,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionDecl6 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -188,10 +205,14 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |           `-DeclRefExpr 0x152d5a8 <col:20> 'int' lvalue Var 0x152d430 'y' 'int'
 */
   auto HandleCallExpr = makeRule(
-      callExpr().bind("caller"),
+      callExpr(
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile()
+      ).bind("caller"),
       {
-        changeTo(before(node("caller")), cat("__trace_function_call(")),
-        changeTo(after(node("caller")), cat(")")),
+        insertBefore(node("caller"), cat("__trace_function_call(")),
+        insertAfter(node("caller"), cat(")")),
         add_include,
       },
       cat("HandleCallExpr")
@@ -200,16 +221,32 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
   auto HandleEachArgumentCallExpr = makeRule(
       stmt(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
         unless(hasAncestor(is_function_pointer)),
         unless(is_function_pointer),
-        hasParent(callExpr())
+        hasParent(callExpr(unless(isInMacro())))
       ).bind("argument"),
       {
-        changeTo(before(node("argument")), cat("__trace_function_call_param(")),
-        changeTo(after(node("argument")), cat(")")),
+        insertBefore(node("argument"), cat("__trace_function_call_param(")),
+        insertAfter(node("argument"), cat(")")),
         add_include,
       },
       cat("HandleEachArgumentCallExpr")
+    );
+
+  auto HandleReturnStmt = makeRule(
+      returnStmt(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        hasReturnValue(expr().bind("ReturnValue"))
+      ),
+      {
+        insertBefore(node("ReturnValue"), cat("__trace_function_return(")),
+        insertAfter(node("ReturnValue"), cat(")")),
+        add_include,
+      },
+      return_found("HandleReturnStmt")
     );
 
   return applyFirst({
@@ -221,7 +258,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
 
     HandleEachArgumentCallExpr, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
-    HandleCallExpr,
+    HandleCallExpr, // HandleCallExpr と HandleEachArgumentCallExpr の適用位置が被って fix を apply できないことがある
+  
+    HandleReturnStmt,
   });
 }
 
