@@ -38,7 +38,8 @@ using namespace ::clang::ast_matchers;
 using namespace ::clang::transformer;
 
 RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
-  auto add_include = addInclude("trace.h", IncludeFormat::Angled);
+  // auto add_include = addInclude("trace.h", IncludeFormat::Angled);
+  auto add_include = addInclude("trace.h");
 
   auto function_found = [](auto rule_name) { return cat("Function declaration found 🎈 (", rule_name, ")"); };
   auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };

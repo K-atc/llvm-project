@@ -149,7 +149,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_case = unless(hasAncestor(caseStmt()));
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
-  auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(anyOf(isStaticLocal(), isStaticStorageClass()))));
+  auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(allOf(isStaticLocal(), isStaticStorageClass()))));
+  auto is_not_in_global_vardecl = unless(hasAncestor(varDecl(hasParent(translationUnitDecl()))));
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
   auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
@@ -158,7 +159,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasAnyOperatorName("++", "--")
       )));
 
-  auto add_include = addInclude("trace.h", IncludeFormat::Angled);
+  // auto add_include = addInclude("trace.h", IncludeFormat::Angled);
+  auto add_include = addInclude("trace.h"); // config.h:7:4: error: #error config.h must be #included before system headers
 
   // <VarDecl <ArraySubscriptExpr>>
 /*
@@ -398,6 +400,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           is_not_in_case,
           is_not_in_initlistexpr,
           is_not_in_static_vardecl,
+          is_not_in_global_vardecl,
           is_not_in_array_vardecl,
           is_not_in_fielddecl,
           is_not_in_enum
