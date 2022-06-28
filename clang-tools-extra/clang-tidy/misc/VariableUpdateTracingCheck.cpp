@@ -43,6 +43,14 @@ AST_MATCHER(Expr, isInMacro) {
   return Node.getBeginLoc().isMacroID();
 }
 
+AST_MATCHER(FieldDecl, hasIntBitwidth) {
+  assert(Node.isBitField());
+  const ASTContext &Ctx = Node.getASTContext();
+  unsigned IntBitWidth = Ctx.getIntWidth(Ctx.IntTy);
+  unsigned CurrentBitWidth = Node.getBitWidthValue(Ctx);
+  return IntBitWidth == CurrentBitWidth;
+}
+
 } // namespace clang
 } // namespace ast_matchers
 
@@ -158,6 +166,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_increment = unless(hasAncestor(unaryOperator(
         hasAnyOperatorName("++", "--")
       )));
+  auto is_bit_field = hasDeclaration(
+        fieldDecl(isBitField(), unless(hasIntBitwidth()))
+      );
 
   // auto add_include = addInclude("trace.h", IncludeFormat::Angled);
   auto add_include = addInclude("trace.h"); // config.h:7:4: error: #error config.h must be #included before system headers
@@ -286,6 +297,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <MemberExpr> = <???>
   // lvalue をハンドルするのみ
+/*
+|   |-BinaryOperator 0x16388f8 <line:126:5, col:20> 'unsigned int' '='
+|   | |-MemberExpr 0x1638890 <col:5, col:13> 'unsigned int' lvalue bitfield .left 0x1638690
+|   | | `-DeclRefExpr 0x1638870 <col:5> 'struct bit_counter':'struct bit_counter' lvalue Var 0x16387f0 'counter' 'struct bit_counter':'struct bit_counter'
+|   | `-ImplicitCastExpr 0x16388e0 <col:20> 'unsigned int' <IntegralCast>
+|   |   `-IntegerLiteral 0x16388c0 <col:20> 'int' 1
+*/
   auto HandleLvalueMemberExpr = makeRule(
       memberExpr(
         unless(isInMacro()),
@@ -294,6 +312,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isLValue(),
         is_lvalue,
         is_not_increment,
+        unless(is_bit_field), // TODO: bit field はトレース対象外なのはなんとかしたいな
         member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
         capture_record_type
       ).bind("lvalue"),
