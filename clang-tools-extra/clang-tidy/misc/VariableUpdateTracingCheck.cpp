@@ -149,7 +149,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_case = unless(hasAncestor(caseStmt()));
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
-  auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(isStaticLocal())));
+  auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(anyOf(isStaticLocal(), isStaticStorageClass()))));
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
   auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
