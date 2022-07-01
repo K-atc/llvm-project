@@ -66,13 +66,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
   auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
-  auto compare_found = cat("Compare found 🏆");
+  auto condition_found = [](auto rule_name) { return cat("Compare found 🏆 (", rule_name, ")"); };
 
-  auto is_lvalue = unless(hasAncestor(implicitCastExpr()));
   auto is_rvalue = hasAncestor(implicitCastExpr(anyOf(
       hasCastKind(CK_LValueToRValue),
       hasCastKind(CK_ArrayToPointerDecay)
     )));
+  auto is_lvalue = allOf(
+      isLValue(),
+      unless(is_rvalue),
+      unless(hasParent(whileStmt()))
+    );
   auto is_referenced_value = hasAncestor(unaryOperator(hasOperatorName("&")));
   auto is_array_subscription = hasAncestor(arraySubscriptExpr());
 
@@ -88,18 +92,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   //   changeTo(node("expr"), cat(node("expr"))),
   //   cat("Trace function found 🤫")
   // );
-
-/* (a) 
-|   |-DeclStmt 0x1b86a20 <line:105:5, col:19>
-|   | `-VarDecl 0x1b869b8 <col:5, col:18> col:18 used i 'int' register
-*/
-  auto capture_declrefexpr_lvalue = declRefExpr(
-        isLValue(),
-        to(varDecl(
-          /* (a) */ unless(isRegister()),
-          hasTypeLoc(typeLoc().bind("lvalue_type"))
-        ))
-      ).bind("lvalue");
 
 /* (1)
 |   |-DeclStmt 0x152bad8 <line:40:5, col:16>
@@ -137,15 +129,19 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |         `-ImplicitCastExpr 0x1329fa8 <col:13> 'struct header *' <LValueToRValue>
 |   |           `-DeclRefExpr 0x1329f88 <col:13> 'struct header *' lvalue Var 0x1329b70 'h' 'struct header *'
 */
-  auto __capture_record_type = ignoringImpCasts(declRefExpr(to(anyOf(
+  auto capture_record_type = hasDescendant(declRefExpr(to(anyOf(
       varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
       parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
     ))));
-  auto capture_record_type = anyOf(
-      /* (1) */ memberExpr(has(__capture_record_type)),
-      /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
-      /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
-    );
+  // auto __capture_record_type = ignoringImpCasts(declRefExpr(to(anyOf(
+  //     varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
+  //     parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
+  //   ))));
+  // auto capture_record_type = anyOf(
+  //     /* (1) */ memberExpr(has(__capture_record_type)),
+  //     /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
+  //     /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
+  //   );
 
   auto capture_assign_operator = binaryOperator(
       anyOf(
@@ -158,20 +154,33 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
   auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(allOf(isStaticLocal(), isStaticStorageClass()))));
-  auto is_not_in_global_vardecl = unless(hasAncestor(varDecl(hasParent(translationUnitDecl()))));
+  // auto is_not_in_global_vardecl = unless(hasAncestor(varDecl(hasParent(translationUnitDecl()))));
+  auto is_not_in_global_vardecl = hasAncestor(functionDecl());
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
   auto is_binary_operator = hasAncestor(binaryOperator(unless(isAssignmentOperator())));
   auto is_not_in_enum = unless(hasAncestor(enumConstantDecl()));
-  auto is_not_increment = unless(hasAncestor(unaryOperator(
-        hasAnyOperatorName("++", "--")
-      )));
+  auto is_not_increment = allOf(
+        unless(hasAncestor(unaryOperator(hasOperatorName("++")))),
+        unless(hasAncestor(unaryOperator(hasOperatorName("--"))))
+      );
+  // auto is_not_increment = unless(hasAncestor(unaryOperator(hasAnyOperatorName("++", "--"))));
   auto is_bit_field = hasDeclaration(
         fieldDecl(isBitField(), unless(hasIntBitwidth()))
       );
+  auto is_not_pointer_operation = allOf(
+        unless(hasAncestor(arraySubscriptExpr())),
+        unless(hasAncestor(unaryOperator(hasOperatorName("*")))),
+        unless(hasAncestor(unaryOperator(hasOperatorName("*"))))
+      );
 
   // auto add_include = addInclude("trace.h", IncludeFormat::Angled);
-  auto add_include = addInclude("trace.h"); // config.h:7:4: error: #error config.h must be #included before system headers
+  auto add_include = addInclude("trace.h"); // Avoids "config.h:7:4: error: #error config.h must be #included before system headers"
+
+/* (a) 
+|   |-DeclStmt 0x1b86a20 <line:105:5, col:19>
+|   | `-VarDecl 0x1b869b8 <col:5, col:18> col:18 used i 'int' register
+*/
 
   // <VarDecl <ArraySubscriptExpr>>
 /*
@@ -269,18 +278,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   // <AssignOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
   auto HandleLvalueDeclRefExpr = makeRule(
-      expr(
+      declRefExpr(
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        // unless(is_referenced_value),
-        unless(hasAncestor(memberExpr())),
-        isLValue(),
         is_lvalue,
         unless(hasAncestor(varDecl())),
+        unless(hasAncestor(memberExpr())),
         is_not_increment,
-        capture_declrefexpr_lvalue
-      ),
+        is_not_pointer_operation,
+        to(varDecl(
+          /* (a) */ unless(isRegister()),
+          hasTypeLoc(typeLoc().bind("lvalue_type"))
+        ))
+      ).bind("lvalue"),
       {
         insertBefore(
           node("lvalue"), 
@@ -297,33 +308,41 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <MemberExpr> = <???>
   // lvalue をハンドルするのみ
-/*
+/* (1)
 |   |-BinaryOperator 0x16388f8 <line:126:5, col:20> 'unsigned int' '='
 |   | |-MemberExpr 0x1638890 <col:5, col:13> 'unsigned int' lvalue bitfield .left 0x1638690
 |   | | `-DeclRefExpr 0x1638870 <col:5> 'struct bit_counter':'struct bit_counter' lvalue Var 0x16387f0 'counter' 'struct bit_counter':'struct bit_counter'
 |   | `-ImplicitCastExpr 0x16388e0 <col:20> 'unsigned int' <IntegralCast>
 |   |   `-IntegerLiteral 0x16388c0 <col:20> 'int' 1
 */
+/* (2)
+|   `-BinaryOperator 0x18c6d78 <line:125:5, col:32> 'int' '='
+|     |-MemberExpr 0x18c6d28 <col:5, col:23> 'int' lvalue .length 0x18bf958
+|     | `-MemberExpr 0x18c6cf8 <col:5, col:16> 'struct (unnamed struct at bad.c:92:5)':'struct header::(unnamed at bad.c:92:5)' lvalue ->nested 0x18bfbc8
+|     |   `-ImplicitCastExpr 0x18c6ce0 <col:5, col:8> 'struct header *' <LValueToRValue>
+|     |     `-MemberExpr 0x18c6cb0 <col:5, col:8> 'struct header *' lvalue ->header 0x18bfcd0
+|     |       `-ImplicitCastExpr 0x18c6c98 <col:5> 'struct header *' <LValueToRValue>
+|     |         `-DeclRefExpr 0x18c6c78 <col:5> 'struct header *' lvalue Var 0x18c0498 'h' 'struct header *'
+|     `-IntegerLiteral 0x18c6d58 <col:32> 'int' 3
+*/
   auto HandleLvalueMemberExpr = makeRule(
       memberExpr(
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        isLValue(),
         is_lvalue,
         is_not_increment,
         unless(is_bit_field), // TODO: bit field はトレース対象外なのはなんとかしたいな
+        is_not_pointer_operation,
+        unless(hasAncestor(memberExpr())),
         member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
         capture_record_type
       ).bind("lvalue"),
       {
-        insertBefore(
+        // NOTE: メンバー参照が連続する場合（v.a->b）はノードを含めて書き換えた方が楽
+        changeTo(
           node("lvalue"),
-          cat("__trace_member_lvalue(")
-        ),
-        insertAfter(
-          node("lvalue"),
-          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))")
+          cat("__trace_member_lvalue(", node("lvalue"), ", ", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))")
         ),
         add_include,
       },
@@ -368,10 +387,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        // unless(is_referenced_value),
         is_rvalue,
-        unless(hasAncestor(memberExpr())),
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_initlistexpr,
         is_not_increment,
+        is_not_pointer_operation,
+        unless(hasAncestor(memberExpr())), // Dismiss member access of struct
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
@@ -386,7 +408,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"), 
-          cat(", (", node("rvalue_type"), "))")
+          cat(", (", name("rvalue_type"), "))")
         ),
         add_include,
       },
@@ -426,11 +448,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         )
       ).bind("rvalue"),
       {
-/* バグる例：
-    char *element, *end;
-    __trace_variable_lvalue(end, char *element, *) = (char *)base + *nmemb * __trace_variable_rvalue(size, size_t);
-                                       ~~~~~~~~~~ 型じゃない
-*/
         insertBefore(
           node("rvalue"), 
           cat("__trace_variable_rvalue(")
@@ -485,8 +502,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        is_lvalue,
+        unless(hasAncestor(varDecl())),
+        unless(hasAncestor(memberExpr())),
+        is_not_pointer_operation,
         hasOperatorName("++"),
-        has(capture_declrefexpr_lvalue)
+        declRefExpr(
+          to(varDecl(
+            /* (a) */ unless(isRegister()),
+            hasTypeLoc(typeLoc().bind("lvalue_type"))
+          ))
+        ).bind("lvalue")
       ).bind("expr"),
       {
         changeTo(
@@ -514,27 +540,34 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |         `-ImplicitCastExpr 0x1a9ea20 <col:12> 'struct pair *' <LValueToRValue>
 |           `-DeclRefExpr 0x1a9ea00 <col:12> 'struct pair *' lvalue Var 0x1a9d3d0 'q' 'struct pair *'
 */
+/*
+|   |-BinaryOperator 0x18c6a90 <line:122:5, col:27> 'int' '='
+|   | |-DeclRefExpr 0x18c6950 <col:5> 'int' lvalue Var 0x18c5df8 'x' 'int'
+|   | `-ImplicitCastExpr 0x18c6a50 <col:9, col:27> 'int' <LValueToRValue>
+|   |   `-MemberExpr 0x18c6a20 <col:9, col:27> 'int' lvalue .length 0x18bf958 // <- Want to match this!
+|   |     `-MemberExpr 0x18c69f0 <col:9, col:20> 'struct (unnamed struct at bad.c:92:5)':'struct header::(unnamed at bad.c:92:5)' lvalue ->nested 0x18bfbc8
+|   |       `-ImplicitCastExpr 0x18c69d8 <col:9, col:12> 'struct header *' <LValueToRValue>
+|   |         `-MemberExpr 0x18c69a8 <col:9, col:12> 'struct header *' lvalue ->header 0x18bfcd0
+|   |           `-ImplicitCastExpr 0x18c6990 <col:9> 'struct header *' <LValueToRValue>
+|   |             `-DeclRefExpr 0x18c6970 <col:9> 'struct header *' lvalue Var 0x18c0498 'h' 'struct header *'
+*/
   auto HandleRvalueMemberExpr = makeRule(
-      // TODO: v += u を v = v + u に正規化
-      expr(
+      memberExpr(
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        memberExpr(
-          is_rvalue,
-          is_not_increment,
-          member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-          capture_record_type
-        ).bind("rvalue")
-      ),
+        is_rvalue,
+        is_not_increment,
+        is_not_pointer_operation,
+        unless(hasAncestor(memberExpr())),
+        member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+        capture_record_type
+      ).bind("rvalue"),
       {
-        insertBefore(
+        // NOTE: メンバー参照が連続する場合（v.a->b）はノードを含めて書き換えた方が楽
+        changeTo(
           node("rvalue"),
-          cat("__trace_member_rvalue(")
-        ),
-        insertAfter(
-          node("rvalue"),
-          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))")
+          cat("__trace_member_rvalue(", node("rvalue"), ", ", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))")
         ),
         add_include,
       },
@@ -542,26 +575,46 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     );
 
   // <BinaryOperator <DeclRefExpr> ...>
-  auto HandleCompareOperator = makeRule(
+  auto HandleBinaryOperatorCondition = makeRule(
       binaryOperator(
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        unless(hasAncestor(varDecl())),
+        // unless(hasAncestor(binaryOperator(hasOperatorName("=")))),
+        unless(hasAncestor(binaryOperator())),
         anyOf(
           isComparisonOperator(),
           hasAnyOperatorName("||", "&&")
         )
       ).bind("expr"),
       {
-        changeTo(
-          node("expr"), 
-          cat(
-            "__trace_condition(", node("expr"), ")"
-          )
-        ),
+        // insertBefore(node("expr"), cat("__trace_condition(")),
+        // insertAfter(node("expr"), cat(")")),
+        changeTo(node("expr"), cat("__trace_condition((", node("expr"), "))")),
         add_include,
       },
-      compare_found
+      condition_found("HandleBinaryOperatorCondition")
+    );
+
+    auto HandleWhileStmtCondition = makeRule(
+      whileStmt(hasCondition(expr().bind("expr"))),
+      {
+        // insertBefore(node("expr"), cat("__trace_condition(")),
+        // insertAfter(node("expr"), cat(")")),
+        changeTo(node("expr"), cat("__trace_condition((", node("expr"), "))")),
+        add_include,
+      },
+      condition_found("HandleWhileStmtCondition")
+    );
+
+    auto HandleForStmtCondition = makeRule(
+      forStmt(hasCondition(expr().bind("expr"))),
+      {
+        changeTo(node("expr"), cat("__trace_condition((", node("expr"), "))")),
+        add_include,
+      },
+      condition_found("HandleForStmtCondition")
     );
 
   return applyFirst({
@@ -569,7 +622,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     HandleVarDecl,
 
-    HandleCompareOperator,
+    HandleWhileStmtCondition,
+    HandleForStmtCondition,
+    HandleBinaryOperatorCondition,
 
     // TODO: インクリメント、デクリメントのハンドルが甘い
     HandleLvalueRvalueIncrementDeclRefExpr,
@@ -579,7 +634,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     // TODO: &v. *v などのポインタ操作をたどるトレース関数
 
-    // Rvalue の方が条件が厳しいので先にマッチング
     // HandleRvalueReferenceArraySubscriptExpr,
     // HandleRvalueArraySubscriptExpr,
     HandleRvalueMemberExpr,
