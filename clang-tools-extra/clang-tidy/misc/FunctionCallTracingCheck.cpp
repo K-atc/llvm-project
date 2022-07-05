@@ -237,7 +237,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       stmt(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        // unless(hasAncestor(is_function_pointer)),
         unless(is_function_pointer), // FIXME: 引数の関数ポインタが無視される
         hasParent(callExpr(unless(isInMacro())))
       ).bind("argument"),
