@@ -113,6 +113,11 @@ New checks
 
   Finds initializations of C++ shared pointers to non-array type that are initialized with an array.
 
+- New :doc:`misc-condition-tracing
+  <clang-tidy/checks/misc-condition-tracing>` check.
+
+  FIXME: add release notes.
+
 - New :doc:`misc-function-call-tracing
   <clang-tidy/checks/misc-function-call-tracing>` check.
 

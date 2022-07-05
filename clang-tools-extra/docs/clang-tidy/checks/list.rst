@@ -212,6 +212,7 @@ Clang-Tidy Checks
    `llvmlibc-callee-namespace <llvmlibc-callee-namespace.html>`_,
    `llvmlibc-implementation-in-namespace <llvmlibc-implementation-in-namespace.html>`_,
    `llvmlibc-restrict-system-libc-headers <llvmlibc-restrict-system-libc-headers.html>`_, "Yes"
+   `misc-condition-tracing <misc-condition-tracing.html>`_, "Yes"
    `misc-definitions-in-headers <misc-definitions-in-headers.html>`_, "Yes"
    `misc-function-call-tracing <misc-function-call-tracing.html>`_, "Yes"
    `misc-misleading-bidirectional <misc-misleading-bidirectional.html>`_,

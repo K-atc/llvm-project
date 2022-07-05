@@ -4,6 +4,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(clangTidyMiscModule
+  ConditionTracingCheck.cpp
   DefinitionsInHeadersCheck.cpp
   FunctionCallTracingCheck.cpp
   MiscTidyModule.cpp

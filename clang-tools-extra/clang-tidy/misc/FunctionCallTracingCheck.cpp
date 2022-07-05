@@ -38,8 +38,8 @@ using namespace ::clang::ast_matchers;
 using namespace ::clang::transformer;
 
 RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
-  // auto add_include = addInclude("trace.h", IncludeFormat::Angled);
-  auto add_include = addInclude("trace.h");
+  auto add_include = addInclude("trace.h", IncludeFormat::Angled);
+  // auto add_include = addInclude("trace.h");
 
   auto function_found = [](auto rule_name) { return cat("Function declaration found 🎈 (", rule_name, ")"); };
   auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };
@@ -74,6 +74,19 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     };
   auto change_paramvardecl_begin = insertBefore(node("body"), cat("{ __trace_function_call_enter(); "));
   auto change_paramvardecl_terminal = insertAfter(node("body"), cat(" }"));
+  auto HandleFunctionDecl0 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl0")
+    );
   auto HandleFunctionDecl1 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
@@ -224,8 +237,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       stmt(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        unless(hasAncestor(is_function_pointer)),
-        unless(is_function_pointer),
+        // unless(hasAncestor(is_function_pointer)),
+        unless(is_function_pointer), // FIXME: 引数の関数ポインタが無視される
         hasParent(callExpr(unless(isInMacro())))
       ).bind("argument"),
       {
@@ -243,8 +256,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         hasReturnValue(expr().bind("ReturnValue"))
       ),
       {
-        insertBefore(node("ReturnValue"), cat("__trace_function_return(")),
-        insertAfter(node("ReturnValue"), cat(")")),
+        // NOTE: return(ret_val); と書いている例もあるので、安全のためにカッコで囲んでおく
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return(")),
+        insertAfter(node("ReturnValue"), cat("))")),
         add_include,
       },
       return_found("HandleReturnStmt")
@@ -257,6 +271,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl3,
     HandleFunctionDecl2,
     HandleFunctionDecl1,
+    HandleFunctionDecl0,
 
     HandleEachArgumentCallExpr, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
     HandleCallExpr, // HandleCallExpr と HandleEachArgumentCallExpr の適用位置が被って fix を apply できないことがある

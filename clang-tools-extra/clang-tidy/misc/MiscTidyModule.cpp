@@ -9,6 +9,7 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "ConditionTracingCheck.h"
 #include "DefinitionsInHeadersCheck.h"
 #include "FunctionCallTracingCheck.h"
 #include "MisleadingBidirectional.h"
@@ -35,6 +36,8 @@ namespace misc {
 class MiscModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
+    CheckFactories.registerCheck<ConditionTracingCheck>(
+        "misc-condition-tracing");
     CheckFactories.registerCheck<DefinitionsInHeadersCheck>(
         "misc-definitions-in-headers");
     CheckFactories.registerCheck<FunctionCallTracingCheck>(
