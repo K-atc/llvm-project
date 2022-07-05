@@ -434,6 +434,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x1381a10 <col:9> 'unsigned int' <IntegralCast>
 |   |   `-IntegerLiteral 0x13819f0 <col:9> 'int' 0
 */
+  // FIXME: マイナス値が -(____trace_variable_rvalue(1, const int)) になってしまう。
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       integerLiteral(

@@ -41,7 +41,8 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
   auto HandleBinaryOperatorCondition = makeRule(
       binaryOperator(
         unless(hasAncestor(varDecl())),
-        unless(hasAncestor(binaryOperator())),
+        unless(hasAncestor(returnStmt())),
+        unless(hasAncestor(binaryOperator())), // 最長一致
         anyOf(
           isComparisonOperator(),
           hasAnyOperatorName("||", "&&")

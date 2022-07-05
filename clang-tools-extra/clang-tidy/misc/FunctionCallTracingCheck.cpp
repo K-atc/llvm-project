@@ -207,6 +207,198 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       },
       function_found("HandleFunctionDecl6")
     );
+  auto HandleFunctionDecl7 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl7")
+    );
+  auto HandleFunctionDecl8 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_paramvardecl(7),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl(7),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl8")
+    );
+  auto HandleFunctionDecl9 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_paramvardecl(7),
+        capture_paramvardecl(8),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl(7),
+        change_paramvardecl(8),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl9")
+    );
+  auto HandleFunctionDecl10 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_paramvardecl(7),
+        capture_paramvardecl(8),
+        capture_paramvardecl(9),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl(7),
+        change_paramvardecl(8),
+        change_paramvardecl(9),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl10")
+    );
+  auto HandleFunctionDecl11 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_paramvardecl(7),
+        capture_paramvardecl(8),
+        capture_paramvardecl(9),
+        capture_paramvardecl(10),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl(7),
+        change_paramvardecl(8),
+        change_paramvardecl(9),
+        change_paramvardecl(10),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl11")
+    );
+  auto HandleFunctionDecl12 = makeRule(
+      functionDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_paramvardecl(4),
+        capture_paramvardecl(5),
+        capture_paramvardecl(6),
+        capture_paramvardecl(7),
+        capture_paramvardecl(8),
+        capture_paramvardecl(9),
+        capture_paramvardecl(10),
+        capture_paramvardecl(11),
+        capture_body
+      ),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl(4),
+        change_paramvardecl(5),
+        change_paramvardecl(6),
+        change_paramvardecl(7),
+        change_paramvardecl(8),
+        change_paramvardecl(9),
+        change_paramvardecl(10),
+        change_paramvardecl(11),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleFunctionDecl12")
+    );
 
   // 関数呼び出しの呼び出し元と呼び出し先の値のマッチング
   // <CallExpr>
@@ -230,6 +422,31 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         add_include,
       },
       cat("HandleCallExpr")
+    );
+
+/*
+|-FunctionDecl 0x2268fb8 </usr/lib/llvm-14/lib/clang/14.0.5/include/stdbool.h:15:14, bad.c:51:1> line:24:6 used test_int 'bool ()'
+| `-CompoundStmt 0x226a130 <col:17, line:51:1>
+[...]
+|   |-CallExpr 0x2269810 <line:37:5, col:8> 'int'
+|   | |-ImplicitCastExpr 0x22697f8 <col:5> 'int (*)(int)' <FunctionToPointerDecay>
+|   | | `-DeclRefExpr 0x2269788 <col:5> 'int (int)' Function 0x2266ea8 'f' 'int (int)'
+|   | `-IntegerLiteral 0x22697a8 <col:7> 'int' 1
+*/
+  auto HandleCallExprWithUnusedFunctionReturnValue = makeRule(
+      callExpr(
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
+        // TODO: 返り値がvoidのときは適用しない
+        hasParent(compoundStmt())
+      ).bind("caller"),
+      {
+        insertBefore(node("caller"), cat("__trace_function_call(")),
+        insertAfter(node("caller"), cat("); __trace_unused_function_return_value()")),
+        add_include,
+      },
+      cat("HandleCallExprWithUnusedFunctionReturnValue")
     );
 
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
@@ -264,6 +481,12 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     );
 
   return applyFirst({
+    HandleFunctionDecl12,
+    HandleFunctionDecl11,
+    HandleFunctionDecl10,
+    HandleFunctionDecl9,
+    HandleFunctionDecl8,
+    HandleFunctionDecl7,
     HandleFunctionDecl6,
     HandleFunctionDecl5,
     HandleFunctionDecl4,
@@ -273,6 +496,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl0,
 
     HandleEachArgumentCallExpr, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
+    
+    HandleCallExprWithUnusedFunctionReturnValue,
     HandleCallExpr, // HandleCallExpr と HandleEachArgumentCallExpr の適用位置が被って fix を apply できないことがある
   
     HandleReturnStmt,
