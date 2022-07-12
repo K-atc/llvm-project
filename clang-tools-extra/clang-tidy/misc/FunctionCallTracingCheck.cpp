@@ -414,15 +414,34 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       callExpr(
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile()
+        isExpansionInMainFile(),
+        unless(callee(functionDecl(returns(voidType())))),
+        callee(expr().bind("callee"))
       ).bind("caller"),
       {
         insertBefore(node("caller"), cat("__trace_function_call(")),
-        insertAfter(node("caller"), cat(")")),
+        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
         add_include,
       },
       cat("HandleCallExpr")
     );
+
+  auto HandleVoidCallExpr = makeRule(
+      callExpr(
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
+        callee(functionDecl(returns(voidType()))),
+        callee(expr().bind("callee"))
+      ).bind("caller"),
+      {
+        insertBefore(node("caller"), cat("__trace_void_function_call(")),
+        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        add_include,
+      },
+      cat("HandleCallExpr")
+    );
+
 
 /*
 |-FunctionDecl 0x2268fb8 </usr/lib/llvm-14/lib/clang/14.0.5/include/stdbool.h:15:14, bad.c:51:1> line:24:6 used test_int 'bool ()'
@@ -438,12 +457,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        // TODO: 返り値がvoidのときは適用しない
-        hasParent(compoundStmt())
+        hasParent(compoundStmt()),
+        unless(callee(functionDecl(returns(voidType())))),
+        callee(expr().bind("callee"))
       ).bind("caller"),
       {
         insertBefore(node("caller"), cat("__trace_function_call(")),
-        insertAfter(node("caller"), cat("); __trace_unused_function_return_value()")),
+        insertAfter(node("caller"), cat(", ", node("callee"), "); __trace_unused_function_return_value()")),
         add_include,
       },
       cat("HandleCallExprWithUnusedFunctionReturnValue")
@@ -451,6 +471,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
   auto HandleEachArgumentCallExpr = makeRule(
+      // NOTE: 残念ながら、関数呼び出しをトレースするために CallExpr とマッチしてはいけない
+      // callExpr(
+      //   forEachArgumentWithParam(
+      //     expr().bind("argument"),
+      //     parmVarDecl(hasType(type()))
+      //   )
+      // ),
       stmt(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
@@ -460,6 +487,21 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       {
         insertBefore(node("argument"), cat("__trace_function_call_param(")),
         insertAfter(node("argument"), cat(")")),
+        add_include,
+      },
+      cat("HandleEachArgumentCallExpr")
+    );
+  auto HandleArgumentFunctionCallsCallExpr = makeRule(
+      callExpr(
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
+        unless(callee(functionDecl(returns(voidType())))),
+        callee(expr().bind("callee"))
+      ).bind("argument"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
+        insertAfter(node("argument"), cat(",", node("callee"), "))")),
         add_include,
       },
       cat("HandleEachArgumentCallExpr")
@@ -495,9 +537,11 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
     HandleFunctionDecl0,
 
+    HandleArgumentFunctionCallsCallExpr,
     HandleEachArgumentCallExpr, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
     
     HandleCallExprWithUnusedFunctionReturnValue,
+    HandleVoidCallExpr,
     HandleCallExpr, // HandleCallExpr と HandleEachArgumentCallExpr の適用位置が被って fix を apply できないことがある
   
     HandleReturnStmt,

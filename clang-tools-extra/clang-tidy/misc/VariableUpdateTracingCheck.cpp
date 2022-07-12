@@ -435,6 +435,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |   `-IntegerLiteral 0x13819f0 <col:9> 'int' 0
 */
   // FIXME: マイナス値が -(____trace_variable_rvalue(1, const int)) になってしまう。
+  auto change_rvalue_const_int = {
+      insertBefore(
+        node("rvalue"), 
+        cat("__trace_variable_rvalue(")
+      ),
+      insertAfter(
+        node("rvalue"), 
+        cat(", (", "const int", "))")
+      ),
+      add_include,
+    };
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       integerLiteral(
@@ -449,18 +460,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_fielddecl,
         is_not_in_enum
       ).bind("rvalue"),
-      {
-        insertBefore(
-          node("rvalue"), 
-          cat("__trace_variable_rvalue(")
-        ),
-        insertAfter(
-          node("rvalue"), 
-          cat(", (", "const int", "))")
-        ),
-        add_include,
-      },
+      change_rvalue_const_int,
       assignment_found("HandleRvalueIntegerLiteral")
+    );
+    
+  auto HandleRvalueSizeofExpr = makeRule(
+      sizeOfExpr(expr()).bind("rvalue"),
+      change_rvalue_const_int,
+      assignment_found("HandleRvalueSizeofExpr")
     );
 
 /*
@@ -599,6 +606,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
+    HandleRvalueSizeofExpr,
 
     HandleLvalueMemberExpr,
     HandleLvalueDeclRefExpr,
