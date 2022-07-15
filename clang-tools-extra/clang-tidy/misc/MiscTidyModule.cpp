@@ -36,12 +36,15 @@ namespace misc {
 class MiscModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
-    CheckFactories.registerCheck<ConditionTracingCheck>(
-        "misc-condition-tracing");
-    CheckFactories.registerCheck<DefinitionsInHeadersCheck>(
-        "misc-definitions-in-headers");
+    CheckFactories.registerCheck<VariableUpdateTracingCheck>(
+        "misc-variable-update-tracing");
     CheckFactories.registerCheck<FunctionCallTracingCheck>(
         "misc-function-call-tracing");
+    CheckFactories.registerCheck<ConditionTracingCheck>(
+        "misc-condition-tracing");
+
+    CheckFactories.registerCheck<DefinitionsInHeadersCheck>(
+        "misc-definitions-in-headers");
     CheckFactories.registerCheck<MisleadingBidirectionalCheck>(
         "misc-misleading-bidirectional");
     CheckFactories.registerCheck<MisleadingIdentifierCheck>(
@@ -69,8 +72,6 @@ public:
         "misc-unused-parameters");
     CheckFactories.registerCheck<UnusedUsingDeclsCheck>(
         "misc-unused-using-decls");
-    CheckFactories.registerCheck<VariableUpdateTracingCheck>(
-        "misc-variable-update-tracing");
   }
 };
 
