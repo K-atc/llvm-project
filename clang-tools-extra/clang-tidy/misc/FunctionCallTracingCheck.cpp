@@ -484,6 +484,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       stmt(
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
+        unless(is_function_pointer),
         hasParent(callExpr(
           unless(isInMacro())
         ))
@@ -515,21 +516,21 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   |           | `-DeclRefExpr 0x14f1350 <col:26> 'int (int)' Function 0x14eab58 'f' 'int (int)'
 |   |           `-IntegerLiteral 0x14f1370 <col:28> 'int' 102
 */
-  // auto HandleFunctionCallCallExprArgument = makeRule(
-  //     callExpr(
-  //       unless(isInMacro()),
-  //       unless(isExpansionInSystemHeader()),
-  //       isExpansionInMainFile(),
-  //       hasParent(callExpr()),
-  //       callee(expr().bind("callee"))
-  //     ).bind("argument"),
-  //     {
-  //       insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
-  //       insertAfter(node("argument"), cat(",", node("callee"), "))")),
-  //       add_include,
-  //     },
-  //     cat("HandleFunctionCallCallExprArgument")
-  //   );
+  auto HandleFunctionCallCallExprArgument = makeRule(
+      callExpr(
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
+        hasParent(callExpr()),
+        callee(expr().bind("callee"))
+      ).bind("argument"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
+        insertAfter(node("argument"), cat(",", node("callee"), "))")),
+        add_include,
+      },
+      cat("HandleFunctionCallCallExprArgument")
+    );
 
   auto HandleCalleeFunctionDeclRefExpr = makeRule(
       // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
@@ -545,6 +546,20 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         add_include,
       },
       cat("HandleCalleeFunctionDeclRefExpr")
+    );
+  auto HandleCalleeFunctionDeclRefExpr2 = makeRule(
+      // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
+      stmt(implicitCastExpr(
+        hasParent(callExpr()),
+        hasCastKind(CK_FunctionToPointerDecay),
+        declRefExpr()
+      )).bind("callee"),
+      {
+        insertBefore(node("callee"), cat("__trace_function_call_param(")),
+        insertAfter(node("callee"), cat(")")),
+        add_include,
+      },
+      cat("HandleCalleeFunctionDeclRefExpr2")
     );
 
   auto HandleReturnStmt = makeRule(
@@ -580,8 +595,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleReturnStmt,
 
     // Match with CallExpr
-    // HandleFunctionCallCallExprArgument,
+    HandleFunctionCallCallExprArgument,
     HandleCalleeFunctionDeclRefExpr,
+    HandleCalleeFunctionDeclRefExpr2,
     HandleUnuseReturnValueCallExpr,
     HandleVoidCallExpr,
     HandleCallExpr, // HandleCallExpr と HandleCallExprArgument の適用位置が被って fix を apply できないことがある
