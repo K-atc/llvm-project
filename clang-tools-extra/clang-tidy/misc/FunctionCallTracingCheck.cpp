@@ -17,6 +17,7 @@
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <iostream>
 
 using namespace clang::ast_matchers;
 
@@ -38,6 +39,8 @@ using namespace ::clang::ast_matchers;
 using namespace ::clang::transformer;
 
 RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
+  std::cerr << "[*] FunctionCallTracingCheckImpl" << std::endl;
+
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
   // auto add_include = addInclude("trace.h");
 
@@ -415,7 +418,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        unless(hasParent(returnStmt())),
         unless(callee(functionDecl(returns(voidType())))),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -453,7 +455,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | | `-DeclRefExpr 0x2269788 <col:5> 'int (int)' Function 0x2266ea8 'f' 'int (int)'
 |   | `-IntegerLiteral 0x22697a8 <col:7> 'int' 1
 */
-  auto HandleCallExprWithUnusedFunctionReturnValue = makeRule(
+  auto HandleUnuseReturnValueCallExpr = makeRule(
       callExpr(
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
@@ -467,7 +469,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("caller"), cat(", ", node("callee"), "); __trace_unused_function_return_value()")),
         add_include,
       },
-      cat("HandleCallExprWithUnusedFunctionReturnValue")
+      cat("HandleUnuseReturnValueCallExpr")
     );
 
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
@@ -482,10 +484,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       stmt(
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        unless(is_function_pointer), // FIXME: 引数の関数ポインタが無視される
         hasParent(callExpr(
-          unless(isInMacro()),
-          unless(hasParent(returnStmt()))
+          unless(isInMacro())
         ))
       ).bind("argument"),
       {
@@ -515,20 +515,36 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   |           | `-DeclRefExpr 0x14f1350 <col:26> 'int (int)' Function 0x14eab58 'f' 'int (int)'
 |   |           `-IntegerLiteral 0x14f1370 <col:28> 'int' 102
 */
-  auto HandleFunctionCallCallExprArgument = makeRule(
-      callExpr(
-        unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
-        hasParent(callExpr()),
-        callee(expr().bind("callee"))
-      ).bind("argument"),
+  // auto HandleFunctionCallCallExprArgument = makeRule(
+  //     callExpr(
+  //       unless(isInMacro()),
+  //       unless(isExpansionInSystemHeader()),
+  //       isExpansionInMainFile(),
+  //       hasParent(callExpr()),
+  //       callee(expr().bind("callee"))
+  //     ).bind("argument"),
+  //     {
+  //       insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
+  //       insertAfter(node("argument"), cat(",", node("callee"), "))")),
+  //       add_include,
+  //     },
+  //     cat("HandleFunctionCallCallExprArgument")
+  //   );
+
+  auto HandleCalleeFunctionDeclRefExpr = makeRule(
+      // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
+      declRefExpr(
+        hasParent(implicitCastExpr(
+          hasCastKind(CK_FunctionToPointerDecay),
+          hasParent(callExpr())
+        ))
+      ).bind("callee"),
       {
-        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
-        insertAfter(node("argument"), cat(",", node("callee"), "))")),
+        insertBefore(node("callee"), cat("__trace_function_call_param(")),
+        insertAfter(node("callee"), cat(")")),
         add_include,
       },
-      cat("HandleFunctionCallCallExprArgument")
+      cat("HandleCalleeFunctionDeclRefExpr")
     );
 
   auto HandleReturnStmt = makeRule(
@@ -546,20 +562,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       return_found("HandleReturnStmt")
     );
 
-  auto HandleCallExprReturnStmt = makeRule(
-      returnStmt(
-        isExpansionInMainFile(),
-        unless(isExpansionInSystemHeader()),
-        hasReturnValue(callExpr(expr().bind("callee")).bind("ReturnValue"))
-      ),
-      {
-        insertBefore(node("ReturnValue"), cat("(__trace_function_return(__trace_function_call(")),
-        insertAfter(node("ReturnValue"), cat(",", node("callee"), ")))")),
-        add_include,
-      },
-      return_found("HandleCallExprReturnStmt")
-    );
-
   return applyFirst({
     HandleFunctionDecl12,
     HandleFunctionDecl11,
@@ -575,12 +577,12 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
     HandleFunctionDecl0,
 
-    HandleCallExprReturnStmt,
     HandleReturnStmt,
 
     // Match with CallExpr
-    HandleFunctionCallCallExprArgument,  
-    HandleCallExprWithUnusedFunctionReturnValue,
+    // HandleFunctionCallCallExprArgument,
+    HandleCalleeFunctionDeclRefExpr,
+    HandleUnuseReturnValueCallExpr,
     HandleVoidCallExpr,
     HandleCallExpr, // HandleCallExpr と HandleCallExprArgument の適用位置が被って fix を apply できないことがある
 

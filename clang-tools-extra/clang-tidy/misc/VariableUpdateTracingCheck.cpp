@@ -383,6 +383,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   //     assignment_found("HandleLvalueArraySubscriptExpr")
   //   );
 
+/*
+|   |   `-CallExpr 0x14f1448 <col:13, col:33> 'int'
+|   |     |-ImplicitCastExpr 0x14f1430 <col:13> 'int (*)(int)' <FunctionToPointerDecay>
+|   |     | `-DeclRefExpr 0x14f1290 <col:13> 'int (int)' Function 0x14eab58 'f' 'int (int)'
+*/
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
@@ -401,7 +406,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
           // 関数引数
-          to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
+          to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+          // 関数定義
+          to(functionDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
         )
       ).bind("rvalue"),
       {

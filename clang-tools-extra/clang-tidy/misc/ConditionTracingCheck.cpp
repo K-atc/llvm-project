@@ -17,6 +17,7 @@
 #include "clang/Tooling/Transformer/Stencil.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <iostream>
 
 using namespace clang::ast_matchers;
 
@@ -28,6 +29,8 @@ using namespace ::clang::ast_matchers;
 using namespace ::clang::transformer;
 
 RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
+  std::cerr << "[*] ConditionTracingCheckImpl" << std::endl;
+
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
 
   auto condition_found = [](auto rule_name) { return cat("Compare found 🏆 (", rule_name, ")"); };
