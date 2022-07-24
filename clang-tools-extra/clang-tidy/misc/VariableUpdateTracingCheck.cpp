@@ -79,7 +79,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_referenced_value = hasAncestor(unaryOperator(hasOperatorName("&")));
   auto is_array_subscription = hasAncestor(arraySubscriptExpr());
 
-
   // __trace_??? 関数呼び出し内ではマッチさせない
   // => マクロなので関数として認識されない！
   // auto HandleTraceFunctionCall = makeRule(
@@ -418,7 +417,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"), 
-          cat(", (", name("rvalue_type"), "))")
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "))")
         ),
         add_include,
       },
@@ -449,7 +448,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       ),
       insertAfter(
         node("rvalue"), 
-        cat(", (", "const int", "))")
+        cat(", ", node("rvalue"), ", (", "const int", "))")
       ),
       add_include,
     };
@@ -501,7 +500,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"), 
-          cat(", ", node("rvalue_type"), ")")
+          cat(", ", node("rvalue"), ", (", node("rvalue_type"), "))")
         ),
         add_include,
       },
