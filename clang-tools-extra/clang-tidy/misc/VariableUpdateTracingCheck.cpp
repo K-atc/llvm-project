@@ -26,6 +26,10 @@ AST_MATCHER(VarDecl, isRegister) {
   return Node.getStorageClass() == SC_Register;
 }
 
+AST_MATCHER(VarDecl, hasConstantInitialization) {
+  return Node.hasConstantInitialization();
+}
+
 // AST_MATCHER(DeclRefExpr, isLValue) {
 //   return Node.isLValue();
 // }
@@ -152,7 +156,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
   auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(allOf(isStaticLocal(), isStaticStorageClass()))));
-  // auto is_not_in_global_vardecl = unless(hasAncestor(varDecl(hasParent(translationUnitDecl()))));
+  auto is_not_in_const_vardecl = hasAncestor(varDecl(unless(hasConstantInitialization())));
   auto is_not_in_global_vardecl = hasAncestor(functionDecl());
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
@@ -397,6 +401,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_rvalue,
         is_not_in_static_vardecl,
         is_not_in_global_vardecl,
+        is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         is_not_increment,
         is_not_pointer_operation,
@@ -471,7 +476,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     );
     
   auto HandleRvalueSizeofExpr = makeRule(
-      sizeOfExpr(expr()).bind("rvalue"),
+      sizeOfExpr(
+        is_not_in_const_vardecl
+      ).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueSizeofExpr")
     );
