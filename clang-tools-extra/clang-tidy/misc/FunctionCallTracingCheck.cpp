@@ -48,6 +48,25 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto return_found = [](auto rule_name) { return cat("Return statement found 📢 (", rule_name, ")"); };
 
 /*
+|-LinkageSpecDecl 0x1649e50 <line:79:1, line:401:1> line:79:8 C
+[...]
+| |-CXXRecordDecl 0x164ba40 prev 0x1649cd0 <line:95:1, line:99:1> line:95:8 referenced struct tiffis_data definition
+| | |-DefinitionData pass_in_registers aggregate standard_layout trivially_copyable
+[...]
+| | |-CXXRecordDecl 0x164bb38 <col:1, col:8> col:8 implicit struct tiffis_data
+| | |-FieldDecl 0x164bc08 <line:97:2, col:11> col:11 referenced stream 'std::istream *'
+| | |-FieldDecl 0x164e1c8 <line:98:9, col:23> col:23 referenced start_pos 'ios::pos_type':'std::fpos<__mbstate_t>'
+| | |-CXXConstructorDecl 0x164e260 <line:95:8> col:8 implicit constexpr tiffis_data 'void (const tiffis_data &)' inline default trivial noexcept-unevaluated 0x164e260
+| | | `-ParmVarDecl 0x164e378 <col:8> col:8 'const tiffis_data &'
+[...]
+*/
+  auto HandleCXXConstructorDecl = makeRule(
+    cxxConstructorDecl(),
+    add_include, // Do nothing
+    function_found("HandleCXXConstructorDecl")
+  );
+
+/*
 |-FunctionDecl 0x20dc9e0 <line:7:1, line:9:1> line:7:5 used add 'int (int, int)'
 | |-ParmVarDecl 0x20dc880 <col:9, col:13> col:13 used x 'int'
 | |-ParmVarDecl 0x20dc900 <col:16, col:20> col:20 used y 'int'
@@ -591,6 +610,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     );
 
   return applyFirst({
+    HandleCXXConstructorDecl,
+
     HandleFunctionDecl12,
     HandleFunctionDecl11,
     HandleFunctionDecl10,
