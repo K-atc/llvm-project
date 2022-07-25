@@ -451,7 +451,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       ).bind("caller"),
       {
         insertBefore(node("caller"), cat("__trace_function_call(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ", ", "()", ")")),
+        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
         add_include,
       },
       cat("HandleCallExpr")
@@ -558,7 +558,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       ).bind("argument"),
       {
         insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
-        insertAfter(node("argument"), cat(",", node("callee"), ", ", "()", "))")),
+        insertAfter(node("argument"), cat(",", node("callee"), "))")),
         add_include,
       },
       cat("HandleFunctionCallCallExprArgument")

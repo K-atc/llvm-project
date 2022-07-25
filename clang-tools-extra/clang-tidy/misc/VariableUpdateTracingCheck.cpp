@@ -134,7 +134,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto capture_record_type = hasDescendant(declRefExpr(to(anyOf(
       varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
       parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
-    ))));
+    ))).bind("record"));
   // auto __capture_record_type = ignoringImpCasts(declRefExpr(to(anyOf(
   //     varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
   //     parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
@@ -348,7 +348,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("lvalue"),
-          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), (", node("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), ", node("record"), ", (", node("record_type"), "))")
         ),
         add_include,
       },
@@ -593,7 +593,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"),
-          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), (", node("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("record"), ", (", node("record_type"), "))")
         ),
         add_include,
       },
