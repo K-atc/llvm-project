@@ -156,7 +156,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
   auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(allOf(isStaticLocal(), isStaticStorageClass()))));
-  auto is_not_in_const_vardecl = hasAncestor(varDecl(unless(hasConstantInitialization())));
+  auto is_not_in_const_vardecl = ignoringImpCasts(unless(hasParent(varDecl(hasConstantInitialization()))));
   auto is_not_in_global_vardecl = hasAncestor(functionDecl());
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
