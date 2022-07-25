@@ -28,6 +28,10 @@ AST_MATCHER(Expr, isInMacro) {
   return Node.getBeginLoc().isMacroID();
 }
 
+AST_MATCHER(CallExpr, returnsVoid) {
+  return Node.getCallReturnType(Finder->getASTContext())->isVoidType();
+}
+
 } // namespace clang
 } // namespace ast_matchers
 
@@ -446,7 +450,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        unless(callee(functionDecl(returns(voidType())))),
+        unless(returnsVoid()),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -462,7 +466,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        callee(functionDecl(returns(voidType()))),
+        returnsVoid(),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -483,22 +487,21 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | | `-DeclRefExpr 0x2269788 <col:5> 'int (int)' Function 0x2266ea8 'f' 'int (int)'
 |   | `-IntegerLiteral 0x22697a8 <col:7> 'int' 1
 */
+  auto callexpr_no_return = callExpr(
+      unless(returnsVoid())
+    ).bind("caller");
   auto HandleUnuseReturnValueCallExpr = makeRule(
-      stmt(callExpr(
-        unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
-        anyOf(
-          hasParent(ifStmt()),
-          hasParent(labelStmt()),
-          hasParent(compoundStmt())
-        ),
-        // unless(callee(functionDecl(returns(voidType())))),
-        callee(expr().bind("callee"))
-      )).bind("caller"),
+      stmt(anyOf(
+        ifStmt(anyOf(
+          hasThen(callexpr_no_return), 
+          hasElse(callexpr_no_return)
+        )),
+        labelStmt(callexpr_no_return),
+        compoundStmt(callexpr_no_return)
+      )),
       {
-        insertBefore(node("caller"), cat("__trace_void_function_call(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        insertBefore(node("caller"), cat("__trace_unused_function_return_value(")),
+        insertAfter(node("caller"), cat(")")),
         add_include,
       },
       cat("HandleUnuseReturnValueCallExpr")
@@ -632,9 +635,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionCallCallExprArgument,
     HandleCalleeFunctionDeclRefExpr,
     // HandleCalleeFunctionDeclRefExpr2,
-    HandleUnuseReturnValueCallExpr,
+    HandleCallExpr,
     HandleVoidCallExpr,
-    HandleCallExpr, // HandleCallExpr と HandleCallExprArgument の適用位置が被って fix を apply できないことがある
+    HandleUnuseReturnValueCallExpr,
 
     // Match with stmt
     HandleCallExprArgument, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている

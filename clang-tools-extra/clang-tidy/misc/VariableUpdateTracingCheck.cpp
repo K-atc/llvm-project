@@ -519,36 +519,36 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |     |-UnaryOperator 0xcbd3d0 <col:28, col:29> 'int' postfix '++'
 |     | `-DeclRefExpr 0xcbd3b0 <col:28> 'int' lvalue Var 0xcbc1e8 'i' 'int'
 */
-  auto HandleLvalueRvalueIncrementDeclRefExpr = makeRule(
-      unaryOperator(
-        unless(isInMacro()),
-        isExpansionInMainFile(),
-        unless(isExpansionInSystemHeader()),
-        is_lvalue,
-        unless(hasAncestor(varDecl())),
-        unless(hasAncestor(memberExpr())),
-        is_not_pointer_operation,
-        hasOperatorName("++"),
-        declRefExpr(
-          to(varDecl(
-            /* (a) */ unless(isRegister()),
-            hasTypeLoc(typeLoc().bind("lvalue_type"))
-          ))
-        ).bind("lvalue")
-      ).bind("expr"),
-      {
-        changeTo(
-          node("expr"),
-          cat(
-            "(__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
-            " += ",
-            "__trace_variable_rvalue(1, (const int)))"
-          )
-        ),
-        add_include,
-      },
-      cat("(HandleLvalueRvalueIncrementDeclRefExpr)")
-    );
+  // auto HandleLvalueRvalueIncrementDeclRefExpr = makeRule(
+  //     unaryOperator(
+  //       unless(isInMacro()),
+  //       isExpansionInMainFile(),
+  //       unless(isExpansionInSystemHeader()),
+  //       is_lvalue,
+  //       unless(hasAncestor(varDecl())),
+  //       unless(hasAncestor(memberExpr())),
+  //       is_not_pointer_operation,
+  //       hasOperatorName("++"),
+  //       declRefExpr(
+  //         to(varDecl(
+  //           /* (a) */ unless(isRegister()),
+  //           hasTypeLoc(typeLoc().bind("lvalue_type"))
+  //         ))
+  //       ).bind("lvalue")
+  //     ).bind("expr"),
+  //     {
+  //       changeTo(
+  //         node("expr"),
+  //         cat(
+  //           "(__trace_variable_lvalue(", node("lvalue"), ", (", node("lvalue_type"), "))"
+  //           " += ",
+  //           "__trace_variable_rvalue(1, (const int)))"
+  //         )
+  //       ),
+  //       add_include,
+  //     },
+  //     cat("(HandleLvalueRvalueIncrementDeclRefExpr)")
+  //   );
 
   // <???> = <MemberExpr <DeclRefExpr>>
   // rvalue をハンドルするのみ
@@ -606,7 +606,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleVarDecl,
 
     // TODO: インクリメント、デクリメントのハンドルが甘い
-    HandleLvalueRvalueIncrementDeclRefExpr,
+    // HandleLvalueRvalueIncrementDeclRefExpr,
     // HandleLvalueArraySubscriptExpr,
 
     // TODO: enum
