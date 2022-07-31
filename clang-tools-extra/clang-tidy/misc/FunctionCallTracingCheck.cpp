@@ -447,9 +447,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 */
   auto HandleCallExpr = makeRule(
       callExpr(
-        unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
+        // unless(isInMacro()),
+        // unless(isExpansionInSystemHeader()),
+        // isExpansionInMainFile(),
         unless(returnsVoid()),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -463,9 +463,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleVoidCallExpr = makeRule(
       callExpr(
-        unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
+        // unless(isInMacro()),
+        // unless(isExpansionInSystemHeader()),
+        // isExpansionInMainFile(),
         returnsVoid(),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -474,7 +474,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("caller"), cat(", ", node("callee"), ")")),
         add_include,
       },
-      cat("HandleCallExpr")
+      cat("HandleVoidCallExpr")
     );
 
 
@@ -487,17 +487,17 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | | `-DeclRefExpr 0x2269788 <col:5> 'int (int)' Function 0x2266ea8 'f' 'int (int)'
 |   | `-IntegerLiteral 0x22697a8 <col:7> 'int' 1
 */
-  auto callexpr_no_return = callExpr(
+  auto callexpr_with_return_value = callExpr(
       unless(returnsVoid())
     ).bind("caller");
   auto HandleUnuseReturnValueCallExpr = makeRule(
       stmt(anyOf(
         ifStmt(anyOf(
-          hasThen(callexpr_no_return), 
-          hasElse(callexpr_no_return)
+          hasThen(callexpr_with_return_value), 
+          hasElse(callexpr_with_return_value)
         )),
-        labelStmt(callexpr_no_return),
-        compoundStmt(callexpr_no_return)
+        labelStmt(callexpr_with_return_value),
+        compoundStmt(callexpr_with_return_value)
       )),
       {
         insertBefore(node("caller"), cat("__trace_unused_function_return_value(")),
@@ -517,8 +517,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       //   )
       // ),
       stmt(
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
+        // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
         unless(is_function_pointer),
         hasParent(callExpr(
           unless(isInMacro())
@@ -554,8 +553,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionCallCallExprArgument = makeRule(
       callExpr(
         unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
         hasParent(callExpr()),
         callee(expr().bind("callee"))
       ).bind("argument"),
@@ -570,9 +567,11 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleCalleeFunctionDeclRefExpr = makeRule(
       // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
       declRefExpr(
-        hasParent(implicitCastExpr(
+        hasAncestor(implicitCastExpr(
           hasCastKind(CK_FunctionToPointerDecay),
-          hasParent(callExpr())
+          hasParent(callExpr(
+            unless(isInMacro())
+          ))
         ))
       ).bind("callee"),
       {
@@ -599,8 +598,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleReturnStmt = makeRule(
       returnStmt(
-        isExpansionInMainFile(),
-        unless(isExpansionInSystemHeader()),
+        // isExpansionInMainFile(),
+        // unless(isExpansionInSystemHeader()),
         hasReturnValue(expr().bind("ReturnValue"))
       ),
       {
@@ -611,6 +610,20 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       },
       return_found("HandleReturnStmt")
     );
+
+  // auto HandleMacroUse = makeRule(
+  //     expr(
+  //       isInMacro(),
+  //       isExpansionInMainFile(),
+  //       unless(isExpansionInSystemHeader())
+  //     ).bind("expr"),
+  //     {
+  //       insertBefore(node("expr"), cat("__trace_macro_use(")),
+  //       insertAfter(node("expr"), cat(")")),
+  //       add_include,
+  //     },
+  //     cat("HandleMacroUse")
+  //   );
 
   return applyFirst({
     HandleCXXConstructorDecl,
@@ -641,6 +654,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
     // Match with stmt
     HandleCallExprArgument, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
+
+    // HandleMacroUse,
   });
 }
 

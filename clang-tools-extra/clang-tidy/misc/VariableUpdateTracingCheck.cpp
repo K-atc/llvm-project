@@ -71,10 +71,13 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
   auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
 
-  auto is_rvalue = hasAncestor(implicitCastExpr(anyOf(
-      hasCastKind(CK_LValueToRValue),
-      hasCastKind(CK_ArrayToPointerDecay)
-    )));
+  auto is_rvalue = hasAncestor(implicitCastExpr(
+      unless(hasParent(cStyleCastExpr(hasCastKind(CK_ToVoid)))),
+      anyOf(
+        hasCastKind(CK_LValueToRValue),
+        hasCastKind(CK_ArrayToPointerDecay)
+      )
+    ));
   auto is_lvalue = allOf(
       isLValue(),
       unless(is_rvalue),
@@ -285,8 +288,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_lvalue,
-        unless(hasAncestor(varDecl())),
+        // unless(hasAncestor(varDecl())),
         unless(hasAncestor(memberExpr())),
+        is_not_in_initlistexpr,
         is_not_increment,
         is_not_pointer_operation,
         to(varDecl(
@@ -460,7 +464,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       integerLiteral(
-        unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_not_in_case,
@@ -490,7 +493,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 */
   auto HandleRvalueStringLiteral = makeRule(
       expr(
-        unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         stringLiteral(
@@ -600,6 +602,25 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueMemberExpr")
     );
 
+  auto HandleRvalueReferenceExpr = makeRule(
+      unaryOperator(
+        is_not_in_initlistexpr,
+        hasOperatorName("&")
+      ).bind("rvalue"),
+      {
+        insertBefore(
+            node("rvalue"),
+            cat("__trace_reference(")
+          ),
+        insertAfter(
+            node("rvalue"),
+            cat(", ", node("rvalue"), ")")
+          ),
+        add_include,
+      },
+      assignment_found("HandleRvalueReferenceExpr")
+    );
+
   return applyFirst({
     // HandleTraceFunctionCall, // 無意味
 
@@ -613,6 +634,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     // TODO: &v. *v などのポインタ操作をたどるトレース関数
 
+    HandleRvalueReferenceExpr,
     // HandleRvalueReferenceArraySubscriptExpr,
     // HandleRvalueArraySubscriptExpr,
     HandleRvalueMemberExpr,
