@@ -30,10 +30,6 @@ AST_MATCHER(VarDecl, hasConstantInitialization) {
   return Node.hasConstantInitialization();
 }
 
-// AST_MATCHER(DeclRefExpr, isLValue) {
-//   return Node.isLValue();
-// }
-
 // NOTE: rvalue な expr も暗黙に含む
 AST_MATCHER(Expr, isLValue) {
   return Node.isLValue();
@@ -135,18 +131,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |           `-DeclRefExpr 0x1329f88 <col:13> 'struct header *' lvalue Var 0x1329b70 'h' 'struct header *'
 */
   auto capture_record_type = hasDescendant(declRefExpr(to(anyOf(
-      varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
+      varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("record_type"))),
       parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
     ))).bind("record"));
-  // auto __capture_record_type = ignoringImpCasts(declRefExpr(to(anyOf(
-  //     varDecl(hasTypeLoc(typeLoc().bind("record_type"))),
-  //     parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
-  //   ))));
-  // auto capture_record_type = anyOf(
-  //     /* (1) */ memberExpr(has(__capture_record_type)),
-  //     /* (2) */ memberExpr(has(memberExpr(has(__capture_record_type)))),
-  //     /* (3) */ memberExpr(has(memberExpr(has(memberExpr(has(__capture_record_type))))))
-  //   );
 
   auto capture_assign_operator = binaryOperator(
       anyOf(
@@ -170,7 +157,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(hasAncestor(unaryOperator(hasOperatorName("--"))))
       );
   // auto is_not_increment = unless(hasAncestor(unaryOperator(hasAnyOperatorName("++", "--"))));
-  auto is_bit_field = hasDeclaration(
+  auto is_bitfield = hasDeclaration(
         fieldDecl(isBitField(), unless(hasIntBitwidth()))
       );
   auto is_not_pointer_operation = allOf(
@@ -178,6 +165,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(hasAncestor(unaryOperator(hasOperatorName("*")))),
         unless(hasAncestor(unaryOperator(hasOperatorName("*"))))
       );
+  auto is_not_in_record = unless(hasAncestor(memberExpr()));
 
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
   // auto add_include = addInclude("trace.h"); // Avoids "config.h:7:4: error: #error config.h must be #included before system headers"
@@ -197,28 +185,35 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |       | `-DeclRefExpr 0x1650188 <col:22> 'unsigned int[3]' lvalue Var 0x164fea0 'array' 'unsigned int[3]'
 |   |       `-IntegerLiteral 0x16501a8 <col:28> 'int' 1
 */
-  // auto HandleRvalueArraySubscriptExpr = makeRule(
-  //     arraySubscriptExpr(
-  //       is_rvalue,
-  //       unless(is_referenced_value),
-  //       hasBase(__capture_record_type)
-  //       // hasType(type().bind("rvalue_type"))
-  //     ).bind("rvalue"),
-  //     {
-  //       changeTo(
-  //         before(node("rvalue")),
-  //         cat("__trace_member_rvalue(")
-  //       ),
-  //       changeTo(
-  //         after(node("rvalue")),
-  //         cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-  //       ),
-  //       add_include,
-  //     },
-  //     declaration_found("HandleRvalueArraySubscriptExpr")
-  //   );
+/*
+|   | |-MemberExpr 0x1a1c620 <col:2, col:9> 'uint64':'unsigned long' lvalue .tdir_count 0x18cebf0
+|   | | `-ArraySubscriptExpr 0x1a1c600 <col:2, col:7> 'TIFFDirEntry':'TIFFDirEntry' lvalue
+|   | |   |-ImplicitCastExpr 0x1a1c5d0 <col:2> 'TIFFDirEntry *' <LValueToRValue>
+|   | |   | `-DeclRefExpr 0x1a1c590 <col:2> 'TIFFDirEntry *' lvalue ParmVar 0x1a1ae70 'dir' 'TIFFDirEntry *'
+|   | |   `-ImplicitCastExpr 0x1a1c5e8 <col:6> 'uint32':'unsigned int' <LValueToRValue>
+|   | |     `-DeclRefExpr 0x1a1c5b0 <col:6> 'uint32':'unsigned int' lvalue Var 0x1a1b3a0 'm' 'uint32':'unsigned int'
+*/
+  auto HandleRvalueArraySubscriptExpr = makeRule(
+      arraySubscriptExpr(
+        is_rvalue,
+        is_not_in_record,
+        hasBase(capture_record_type)
+        // hasType(type().bind("rvalue_type"))
+      ).bind("rvalue"),
+      {
+        changeTo(
+          before(node("rvalue")),
+          cat("__trace_member_rvalue(")
+        ),
+        changeTo(
+          after(node("rvalue")),
+          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", node("record_type"), "))")
+        ),
+        add_include,
+      },
+      declaration_found("HandleRvalueArraySubscriptExpr")
+    );
 
-  // <VarDecl <UnaryOperator <ArraySubscriptExpr>>>
 /*
 |   `-DeclStmt 0x1c57fe0 <line:82:5, col:23>
 |     `-VarDecl 0x1c57ee8 <col:5, col:22> col:10 y 'int *' cinit
@@ -228,28 +223,26 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |           | `-DeclRefExpr 0x1c57f50 <col:15> 'int[3]' lvalue Var 0x1c57ba0 'array' 'int[3]'
 |           `-IntegerLiteral 0x1c57f70 <col:21> 'int' 0
 */
-  // auto HandleRvalueReferenceArraySubscriptExpr = makeRule(
-  //     unaryOperator(
-  //       hasOperatorName("&"),
-  //       hasUnaryOperand(arraySubscriptExpr(
-  //         hasBase(__capture_record_type)
-  //       ))
-  //       // hasType(type().bind("rvalue_type"))
-  //     ).bind("rvalue"),
-  //     {
-  //       changeTo(
-  //         before(node("rvalue")),
-  //         cat("__trace_member_rvalue(")
-  //       ),
-  //       changeTo(
-  //         after(node("rvalue")),
-  //         cat(", ", node("rvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-  //         // cat(", (", node("rvalue_type"), "), (", node("record_type"), "))")
-  //       ),
-  //       add_include,
-  //     },
-  //     declaration_found("HandleRvalueReferenceArraySubscriptExpr")
-  //   );
+  auto HandleLvalueArraySubscriptExpr = makeRule(
+      arraySubscriptExpr(
+        // is_lvalue,
+        is_not_increment,
+        is_not_in_record,
+        hasBase(capture_record_type)
+      ).bind("lvalue"),
+      {
+        changeTo(
+          before(node("lvalue")),
+          cat("__trace_member_lvalue(")
+        ),
+        changeTo(
+          after(node("lvalue")),
+          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", node("record_type"), "))")
+        ),
+        add_include,
+      },
+      declaration_found("HandleLvalueArraySubscriptExpr")
+    );
 
   // <VarDecl <CallExpr>>
 /*
@@ -305,7 +298,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("lvalue"), 
-          cat(", (", node("lvalue_type"), "))")
+          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "))")
         ),
         add_include,
       },
@@ -338,7 +331,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(isExpansionInSystemHeader()),
         is_lvalue,
         is_not_increment,
-        unless(is_bit_field), // TODO: bit field はトレース対象外なのはなんとかしたいな
+        unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
         is_not_pointer_operation,
         unless(hasAncestor(memberExpr())),
         member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
@@ -358,37 +351,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       },
       assignment_found("HandleLvalueMemberExpr")
     );
-
-  // 配列への代入
-  // lvalueのみ扱う
-/*
-|   |-BinaryOperator 0x1003068 <line:82:5, col:16> 'int' '='
-|   | |-ArraySubscriptExpr 0x1003028 <col:5, col:12> 'int' lvalue
-|   | | |-ImplicitCastExpr 0x1003010 <col:5> 'int *' <ArrayToPointerDecay>
-|   | | | `-DeclRefExpr 0x1002fd0 <col:5> 'int[3]' lvalue Var 0x1002e80 'array' 'int[3]'
-|   | | `-IntegerLiteral 0x1002ff0 <col:11> 'int' 0
-|   | `-IntegerLiteral 0x1003048 <col:16> 'int' 1
-*/
-  // auto HandleLvalueArraySubscriptExpr = makeRule(
-  //       arraySubscriptExpr(
-  //         unless(is_rvalue),
-  //         unless(is_referenced_value),
-  //         hasBase(__capture_record_type)
-  //         // hasType(type().bind("lvalue_type"))
-  //       ).bind("lvalue"),
-  //     {
-  //       changeTo(
-  //         before(node("lvalue")),
-  //         cat("__trace_member_lvalue(")
-  //       ),
-  //       changeTo(
-  //         after(node("lvalue")),
-  //         cat(", ", node("lvalue"), ", (", "FIXME", "), (", node("record_type"), "))")
-  //       ),
-  //       add_include,
-  //     },
-  //     assignment_found("HandleLvalueArraySubscriptExpr")
-  //   );
 
 /*
 |   |   `-CallExpr 0x14f1448 <col:13, col:33> 'int'
@@ -583,6 +545,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_rvalue,
         is_not_increment,
         is_not_pointer_operation,
+        unless(is_bitfield),
         unless(hasAncestor(memberExpr())),
         member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
         capture_record_type
@@ -628,21 +591,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     // TODO: インクリメント、デクリメントのハンドルが甘い
     // HandleLvalueRvalueIncrementDeclRefExpr,
-    // HandleLvalueArraySubscriptExpr,
 
     // TODO: enum
 
-    // TODO: &v. *v などのポインタ操作をたどるトレース関数
+    // TODO: *v などのポインタ操作をたどるトレース関数
 
+    HandleRvalueSizeofExpr,
     HandleRvalueReferenceExpr,
-    // HandleRvalueReferenceArraySubscriptExpr,
-    // HandleRvalueArraySubscriptExpr,
+    HandleRvalueArraySubscriptExpr,
     HandleRvalueMemberExpr,
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
-    HandleRvalueSizeofExpr,
 
+    HandleLvalueArraySubscriptExpr,
     HandleLvalueMemberExpr,
     HandleLvalueDeclRefExpr,
   });

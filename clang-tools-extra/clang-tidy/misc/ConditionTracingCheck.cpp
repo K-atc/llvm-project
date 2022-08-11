@@ -22,6 +22,16 @@
 using namespace clang::ast_matchers;
 
 namespace clang {
+namespace ast_matchers {
+
+AST_MATCHER(Stmt, isInMacro) {
+  return Node.getBeginLoc().isMacroID();
+}
+
+} // namespace clang
+} // namespace ast_matchers
+
+namespace clang {
 namespace tidy {
 namespace misc {
 
@@ -41,36 +51,48 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
       add_include,
     };
 
-  auto HandleBinaryOperatorCondition = makeRule(
-      binaryOperator(
-        unless(hasAncestor(varDecl())),
-        unless(hasAncestor(returnStmt())),
-        unless(hasAncestor(binaryOperator())), // 最長一致
-        anyOf(
-          isComparisonOperator(),
-          hasAnyOperatorName("||", "&&")
-        )
-      ).bind("expr"),
+  // auto HandleBinaryOperatorIfStmtCondition = makeRule(
+  //     binaryOperator(
+  //       // unless(hasAncestor(binaryOperator())), // 最長一致
+  //       // anyOf(
+  //       //   isComparisonOperator(),
+  //       //   hasAnyOperatorName("||", "&&")
+  //       // )
+  //       hasParent(ifStmt())
+  //     ).bind("expr"),
+  //     trace_condition_change_set,
+  //     condition_found("HandleBinaryOperatorIfStmtCondition")
+  //   );
+
+  auto HandleIfStmtCondition = makeRule(
+      ifStmt(
+        hasCondition(expr(unless(isInMacro())).bind("expr"))
+      ),
       trace_condition_change_set,
-      condition_found("HandleBinaryOperatorCondition")
+      condition_found("HandleIfStmtCondition")
     );
 
   auto HandleWhileStmtCondition = makeRule(
-      whileStmt(hasCondition(expr().bind("expr"))),
+      whileStmt(
+        hasCondition(expr(unless(isInMacro())).bind("expr"))
+      ),
       trace_condition_change_set,
       condition_found("HandleWhileStmtCondition")
     );
 
   auto HandleForStmtCondition = makeRule(
-      forStmt(hasCondition(expr().bind("expr"))),
+      forStmt(
+        hasCondition(expr(unless(isInMacro())).bind("expr"))
+      ),
       trace_condition_change_set,
       condition_found("HandleForStmtCondition")
     );
 
   return applyFirst({
+    HandleIfStmtCondition,
+    // HandleBinaryOperatorIfStmtCondition,
     HandleWhileStmtCondition,
     HandleForStmtCondition,
-    HandleBinaryOperatorCondition,
   });
 }
 
