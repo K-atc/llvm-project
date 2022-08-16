@@ -315,7 +315,7 @@ def main():
     else:
       subprocess.check_call(invocation)
   except:
-    print("Unable to run clang-tidy.", file=sys.stderr)
+    print("error: Unable to run clang-tidy.", file=sys.stderr)
     sys.exit(1)
 
   # Load the database and extract all files.
@@ -323,7 +323,7 @@ def main():
   files = set([make_absolute(entry['file'], entry['directory'])
            for entry in database])
   # コンパイルエラーがうざいので措置
-  files = set(filter(lambda path: not path.endswith(".cxx"), files))
+  files = set(filter(lambda path: path.endswith(".c"), files))
 
   max_task = args.j
   if max_task == 0:
@@ -355,6 +355,7 @@ def main():
     # Wait for all threads to be done.
     task_queue.join()
     if len(failed_files):
+      print(f'\nerror: There are failed_files: {failed_files}', file=sys.stderr)
       return_code = 1
 
   except KeyboardInterrupt:
