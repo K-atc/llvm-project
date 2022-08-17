@@ -146,7 +146,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto is_not_in_initlistexpr = unless(hasAncestor(initListExpr()));
   auto is_not_in_vardecl = unless(hasAncestor(varDecl()));
   auto is_not_in_static_vardecl = unless(hasAncestor(varDecl(allOf(isStaticLocal(), isStaticStorageClass()))));
-  auto is_not_in_const_vardecl = ignoringImpCasts(unless(hasParent(varDecl(hasConstantInitialization()))));
+  auto is_not_in_const_vardecl = unless(hasAncestor(varDecl(hasConstantInitialization())));
   auto is_not_in_global_vardecl = hasAncestor(functionDecl());
   auto is_not_in_array_vardecl = unless(hasAncestor(varDecl(hasType(arrayType())))); // e.g. int array[1+2]
   auto is_not_in_fielddecl = unless(hasAncestor(fieldDecl()));
@@ -196,6 +196,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleRvalueArraySubscriptExpr = makeRule(
       arraySubscriptExpr(
         is_rvalue,
+        is_not_in_initlistexpr,
         is_not_in_record,
         hasBase(capture_record_type)
         // hasType(type().bind("rvalue_type"))
@@ -226,6 +227,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleLvalueArraySubscriptExpr = makeRule(
       arraySubscriptExpr(
         // is_lvalue,
+        is_not_in_initlistexpr,
         is_not_increment,
         is_not_in_record,
         hasBase(capture_record_type)
@@ -257,6 +259,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       varDecl(
         isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
         unless(isExpansionInSystemHeader()),
+        hasDescendant(expr()), // 代入を伴うこと
         hasParent(declStmt( // 文法破壊防止
           unless(hasParent(forStmt())),
           hasSingleDecl(varDecl())
@@ -283,6 +286,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_lvalue,
         // unless(hasAncestor(varDecl())),
         unless(hasAncestor(memberExpr())),
+        is_not_in_static_vardecl,
+        is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         is_not_increment,
         is_not_pointer_operation,
@@ -330,6 +335,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_lvalue,
+        is_not_in_initlistexpr,
         is_not_increment,
         unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
         is_not_pointer_operation,
@@ -441,9 +447,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     );
     
   auto HandleRvalueSizeofExpr = makeRule(
-      sizeOfExpr(
-        is_not_in_const_vardecl
-      ).bind("rvalue"),
+      sizeOfExpr(expr(
+        is_not_in_case,
+        is_not_in_initlistexpr,
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_array_vardecl,
+        is_not_in_fielddecl,
+        is_not_in_enum
+      )).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueSizeofExpr")
     );
@@ -543,6 +555,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_rvalue,
+        is_not_in_initlistexpr,
         is_not_increment,
         is_not_pointer_operation,
         unless(is_bitfield),
@@ -567,6 +580,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   auto HandleRvalueReferenceExpr = makeRule(
       unaryOperator(
+        is_not_in_static_vardecl,
+        is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         hasOperatorName("&")
       ).bind("rvalue"),
