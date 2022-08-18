@@ -447,9 +447,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 */
   auto HandleCallExpr = makeRule(
       callExpr(
-        // unless(isInMacro()),
-        // unless(isExpansionInSystemHeader()),
-        // isExpansionInMainFile(),
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
         unless(returnsVoid()),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -463,9 +463,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleVoidCallExpr = makeRule(
       callExpr(
-        // unless(isInMacro()),
-        // unless(isExpansionInSystemHeader()),
-        // isExpansionInMainFile(),
+        unless(isInMacro()),
+        unless(isExpansionInSystemHeader()),
+        isExpansionInMainFile(),
         returnsVoid(),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -529,6 +529,29 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         add_include,
       },
       cat("HandleCallExprArgument")
+    );
+
+/* 📝 g(NULL, 3) の AST
+|   |     `-CallExpr 0x15ee820 <col:20, col:29> 'int'
+|   |       |-ImplicitCastExpr 0x15ee808 <col:20> 'int (*)(void *, int)' <FunctionToPointerDecay>
+|   |       | `-DeclRefExpr 0x15ee708 <col:20> 'int (void *, int)' Function 0x15e8150 'g' 'int (void *, int)'
+|   |       |-ParenExpr 0x15ee788 </usr/lib/llvm-14/lib/clang/14.0.5/include/stddef.h:89:16, col:25> 'void *'
+|   |       | `-CStyleCastExpr 0x15ee760 <col:17, col:24> 'void *' <NullToPointer>
+|   |       |   `-IntegerLiteral 0x15ee728 <col:24> 'int' 0
+|   |       `-IntegerLiteral 0x15ee7a8 <bad.c:107:28> 'int' 3
+*/
+  auto HandleCallNullArgument = makeRule(
+      expr(parenExpr(
+        cStyleCastExpr(
+          hasCastKind(CK_NullToPointer)
+        )
+      )).bind("argument"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param(")),
+        insertAfter(node("argument"), cat(")")),
+        add_include,
+      },
+      cat("HandleCallNullArgument")
     );
 
 /*
@@ -653,6 +676,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleUnuseReturnValueCallExpr,
 
     // Match with stmt
+    HandleCallNullArgument,
     HandleCallExprArgument, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
 
     // HandleMacroUse,

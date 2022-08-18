@@ -130,8 +130,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |         `-ImplicitCastExpr 0x1329fa8 <col:13> 'struct header *' <LValueToRValue>
 |   |           `-DeclRefExpr 0x1329f88 <col:13> 'struct header *' lvalue Var 0x1329b70 'h' 'struct header *'
 */
+/*
+|-RecordDecl 0x812e58 <line:202:1, line:205:1> line:202:8 struct pair2 definition
+| |-FieldDecl 0x812f20 <line:203:5, col:17> col:17 referenced a 'struct pair':'struct pair'
+| `-FieldDecl 0x812f90 <line:204:5, col:17> col:17 b 'struct pair':'struct pair'
+*/
   auto capture_record_type = hasDescendant(declRefExpr(to(anyOf(
       varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("record_type"))),
+      recordDecl(namedDecl().bind("record_type")),
       parmVarDecl(hasTypeLoc(typeLoc().bind("record_type")))
     ))).bind("record"));
 
@@ -161,11 +167,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         fieldDecl(isBitField(), unless(hasIntBitwidth()))
       );
   auto is_not_pointer_operation = allOf(
-        unless(hasAncestor(arraySubscriptExpr())),
-        unless(hasAncestor(unaryOperator(hasOperatorName("*")))),
+        // unless(hasAncestor(arraySubscriptExpr())),
+        unless(hasAncestor(unaryOperator(hasOperatorName("*")))), // allOf() を残すための重複行
         unless(hasAncestor(unaryOperator(hasOperatorName("*"))))
       );
-  auto is_not_in_record = unless(hasAncestor(memberExpr()));
+  auto child_does_not_have_record = unless(hasAncestor(memberExpr()));
 
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
   // auto add_include = addInclude("trace.h"); // Avoids "config.h:7:4: error: #error config.h must be #included before system headers"
@@ -193,11 +199,21 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | |   `-ImplicitCastExpr 0x1a1c5e8 <col:6> 'uint32':'unsigned int' <LValueToRValue>
 |   | |     `-DeclRefExpr 0x1a1c5b0 <col:6> 'uint32':'unsigned int' lvalue Var 0x1a1b3a0 'm' 'uint32':'unsigned int'
 */
+/*
+|   |   `-ImplicitCastExpr 0x815a38 <col:13, col:23> 'int' <LValueToRValue>
+|   |     `-ArraySubscriptExpr 0x815a18 <col:13, col:23> 'int' lvalue
+|   |       |-ImplicitCastExpr 0x815a00 <col:13, col:16> 'int *' <ArrayToPointerDecay>
+|   |       | `-MemberExpr 0x8159b0 <col:13, col:16> 'int[3]' lvalue ->array 0x813430
+|   |       |   `-ImplicitCastExpr 0x815998 <col:13> 'struct header *' <LValueToRValue>
+|   |       |     `-DeclRefExpr 0x815978 <col:13> 'struct header *' lvalue Var 0x814570 'h' 'struct header *'
+|   |       `-IntegerLiteral 0x8159e0 <col:22> 'int' 0
+*/
   auto HandleRvalueArraySubscriptExpr = makeRule(
       arraySubscriptExpr(
         is_rvalue,
+        unless(is_referenced_value),
         is_not_in_initlistexpr,
-        is_not_in_record,
+        child_does_not_have_record,
         hasBase(capture_record_type)
         // hasType(type().bind("rvalue_type"))
       ).bind("rvalue"),
@@ -208,7 +224,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("rvalue")),
-          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", node("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -229,7 +245,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         // is_lvalue,
         is_not_in_initlistexpr,
         is_not_increment,
-        is_not_in_record,
+        child_does_not_have_record,
         hasBase(capture_record_type)
       ).bind("lvalue"),
       {
@@ -239,7 +255,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("lvalue")),
-          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", node("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -351,7 +367,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("lvalue"),
-          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), ", node("record"), ", (", node("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -549,6 +565,16 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |           `-ImplicitCastExpr 0x18c6990 <col:9> 'struct header *' <LValueToRValue>
 |   |             `-DeclRefExpr 0x18c6970 <col:9> 'struct header *' lvalue Var 0x18c0498 'h' 'struct header *'
 */
+/*
+|   | `-VarDecl 0x815910 <col:5, col:23> col:9 a 'int' cinit
+|   |   `-ImplicitCastExpr 0x815a38 <col:13, col:23> 'int' <LValueToRValue>
+|   |     `-ArraySubscriptExpr 0x815a18 <col:13, col:23> 'int' lvalue
+|   |       |-ImplicitCastExpr 0x815a00 <col:13, col:16> 'int *' <ArrayToPointerDecay>
+|   |       | `-MemberExpr 0x8159b0 <col:13, col:16> 'int[3]' lvalue ->array 0x813430
+|   |       |   `-ImplicitCastExpr 0x815998 <col:13> 'struct header *' <LValueToRValue>
+|   |       |     `-DeclRefExpr 0x815978 <col:13> 'struct header *' lvalue Var 0x814570 'h' 'struct header *'
+|   |       `-IntegerLiteral 0x8159e0 <col:22> 'int' 0
+*/
   auto HandleRvalueMemberExpr = makeRule(
       memberExpr(
         unless(isInMacro()),
@@ -559,7 +585,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_increment,
         is_not_pointer_operation,
         unless(is_bitfield),
-        unless(hasAncestor(memberExpr())),
+        child_does_not_have_record,
         member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
         capture_record_type
       ).bind("rvalue"),
@@ -571,7 +597,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"),
-          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("record"), ", (", node("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },

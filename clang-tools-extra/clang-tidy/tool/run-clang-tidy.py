@@ -324,6 +324,7 @@ def main():
            for entry in database])
   # コンパイルエラーがうざいので措置
   files = set(filter(lambda path: path.endswith(".c"), files))
+  assert(len(files) > 0, "No files to fix!!")
 
   max_task = args.j
   if max_task == 0:
