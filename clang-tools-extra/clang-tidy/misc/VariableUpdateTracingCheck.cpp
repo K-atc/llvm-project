@@ -51,6 +51,16 @@ AST_MATCHER(FieldDecl, hasIntBitwidth) {
   return IntBitWidth == CurrentBitWidth;
 }
 
+AST_MATCHER(QualType, isShortInt) {
+  if (Node->isIntegerType()) {
+    auto kind = dyn_cast<BuiltinType>(Node.getTypePtr())->getKind();
+    return kind == BuiltinType::Short || kind == BuiltinType::UShort;
+  } else {
+    return false;
+  }
+}
+
+
 } // namespace clang
 } // namespace ast_matchers
 
@@ -231,6 +241,29 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       declaration_found("HandleRvalueArraySubscriptExpr")
     );
 
+  auto HandleRvalueMemberExprArraySubscriptExpr = makeRule(
+      arraySubscriptExpr(
+        is_rvalue,
+        unless(is_referenced_value),
+        is_not_in_initlistexpr,
+        child_does_not_have_record,
+        hasBase(ignoringParenImpCasts(memberExpr(member(has(typeLoc().bind("record_type")))).bind("record")))
+        // hasTypeLoc(typeLoc().bind("rvalue_type"))
+      ).bind("rvalue"),
+      {
+        changeTo(
+          before(node("rvalue")),
+          cat("__trace_member_rvalue(")
+        ),
+        changeTo(
+          after(node("rvalue")),
+          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+        ),
+        add_include,
+      },
+      declaration_found("HandleRvalueMemberExprArraySubscriptExpr")
+    );
+
 /*
 |   `-DeclStmt 0x1c57fe0 <line:82:5, col:23>
 |     `-VarDecl 0x1c57ee8 <col:5, col:22> col:10 y 'int *' cinit
@@ -243,6 +276,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto HandleLvalueArraySubscriptExpr = makeRule(
       arraySubscriptExpr(
         // is_lvalue,
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         is_not_increment,
         child_does_not_have_record,
@@ -260,6 +296,31 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         add_include,
       },
       declaration_found("HandleLvalueArraySubscriptExpr")
+    );
+
+  auto HandleLvalueMemberExprArraySubscriptExpr = makeRule(
+      arraySubscriptExpr(
+        // is_lvalue,
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_const_vardecl,
+        is_not_in_initlistexpr,
+        is_not_increment,
+        child_does_not_have_record,
+        hasBase(ignoringParenImpCasts(memberExpr(member(has(typeLoc().bind("record_type")))).bind("record")))
+      ).bind("lvalue"),
+      {
+        changeTo(
+          before(node("lvalue")),
+          cat("__trace_member_lvalue(")
+        ),
+        changeTo(
+          after(node("lvalue")),
+          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+        ),
+        add_include,
+      },
+      declaration_found("HandleLvalueMemberExprArraySubscriptExpr")
     );
 
   // <VarDecl <CallExpr>>
@@ -379,6 +440,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |     |-ImplicitCastExpr 0x14f1430 <col:13> 'int (*)(int)' <FunctionToPointerDecay>
 |   |     | `-DeclRefExpr 0x14f1290 <col:13> 'int (int)' Function 0x14eab58 'f' 'int (int)'
 */
+/*
+|   |   | |   `-UnaryOperator 0x235f138 <col:14, col:33> 'unsigned int' lvalue prefix '*' cannot overflow
+|   |   | |     `-CStyleCastExpr 0x235f110 <col:15, col:33> 'unsigned int *' <BitCast>
+|   |   | |       `-UnaryOperator 0x235f0b8 <col:32, col:33> 'unsigned short *' prefix '&' cannot overflow
+|   |   | |         `-DeclRefExpr 0x235f068 <col:33> 'unsigned short' lvalue Var 0x235efb0 's' 'unsigned short'
+*/
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
@@ -392,8 +459,12 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         is_not_increment,
-        is_not_pointer_operation,
-        unless(hasAncestor(memberExpr())), // Dismiss member access of struct
+        unless(allOf(
+          hasParent(unaryOperator(hasOperatorName("&"))),
+          hasType(isShortInt())
+        )),
+        // is_not_pointer_operation,
+        // unless(hasAncestor(memberExpr())), // Dismiss member access of struct
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
@@ -504,6 +575,43 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         add_include,
       },
       assignment_found("HandleRvalueStringLiteral")
+    );
+
+/*
+|   |-DeclStmt 0x157a5c8 <line:119:5, col:21>
+|   | `-VarDecl 0x157a4c0 <col:5, col:20> col:11 used x 'void *' cinit
+|   |   `-ParenExpr 0x157a5a8 <col:15, col:20> 'void *'
+|   |     `-ParenExpr 0x157a588 </usr/lib/llvm-14/lib/clang/14.0.5/include/stddef.h:89:16, col:25> 'void *'
+|   |       `-CStyleCastExpr 0x157a560 <col:17, col:24> 'void *' <NullToPointer>
+|   |         `-IntegerLiteral 0x157a528 <col:24> 'int' 0
+*/
+  auto HandleRvalueNull = makeRule(
+      parenExpr(
+        unless(isInMacro()),
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_const_vardecl,
+        is_not_in_initlistexpr,
+        // NOTE: libtooling では，システム定義側に何かが挟まっているっぽい
+        // NOTE: `((NULL))` みたいになっているとバグりそう
+        hasDescendant(
+          cStyleCastExpr(
+            hasCastKind(CK_NullToPointer)
+          )
+        )
+      ).bind("rvalue"),
+      {
+        insertBefore(
+          node("rvalue"), 
+          cat("__trace_variable_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"), 
+          cat(", ", node("rvalue"), ", (NULL))")
+        ),
+        add_include,
+      },
+      assignment_found("HandleRvalueNull")
     );
 
   // <DeclRefExpr>++
@@ -637,14 +745,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     // TODO: *v などのポインタ操作をたどるトレース関数
 
+    HandleRvalueNull,
     HandleRvalueSizeofExpr,
     HandleRvalueReferenceExpr,
+    HandleRvalueMemberExprArraySubscriptExpr,
     HandleRvalueArraySubscriptExpr,
     HandleRvalueMemberExpr,
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
 
+    HandleLvalueMemberExprArraySubscriptExpr,
     HandleLvalueArraySubscriptExpr,
     HandleLvalueMemberExpr,
     HandleLvalueDeclRefExpr,
