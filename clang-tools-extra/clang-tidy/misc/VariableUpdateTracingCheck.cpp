@@ -52,9 +52,10 @@ AST_MATCHER(FieldDecl, hasIntBitwidth) {
 }
 
 AST_MATCHER(QualType, isShortInt) {
-  if (Node->isIntegerType()) {
-    auto kind = dyn_cast<BuiltinType>(Node.getTypePtr())->getKind();
-    return kind == BuiltinType::Short || kind == BuiltinType::UShort;
+  auto ctype = Node.getCanonicalType();
+  if (ctype->isBuiltinType()) {
+    auto kind = dyn_cast<BuiltinType>(ctype.getTypePtr())->getKind();
+    return kind == BuiltinType::Short || kind == BuiltinType::UShort || kind == BuiltinType::SChar || kind == BuiltinType::UChar;
   } else {
     return false;
   }
