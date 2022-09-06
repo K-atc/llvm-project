@@ -32,6 +32,10 @@ AST_MATCHER(CallExpr, returnsVoid) {
   return Node.getCallReturnType(Finder->getASTContext())->isVoidType();
 }
 
+AST_MATCHER(FunctionDecl, isBuiltinFunction) {
+  return Node.getNameInfo().getName().getAsString().find("__builtin_") == 0;
+}
+
 } // namespace clang
 } // namespace ast_matchers
 
@@ -451,6 +455,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
         unless(returnsVoid()),
+        unless(callee(functionDecl(isBuiltinFunction()))),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -467,6 +472,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
         returnsVoid(),
+        unless(callee(functionDecl(isBuiltinFunction()))),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -520,6 +526,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
         unless(is_function_pointer),
         hasParent(callExpr(
+          unless(callee(functionDecl(isBuiltinFunction()))),
           unless(isInMacro())
         ))
       ).bind("argument"),

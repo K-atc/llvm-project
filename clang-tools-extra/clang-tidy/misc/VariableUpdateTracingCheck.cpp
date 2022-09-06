@@ -460,12 +460,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         is_not_increment,
-        unless(allOf(
-          hasParent(unaryOperator(hasOperatorName("&"))),
-          hasType(isShortInt())
-        )),
-        // is_not_pointer_operation,
-        // unless(hasAncestor(memberExpr())), // Dismiss member access of struct
+        unless(is_referenced_value),
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
