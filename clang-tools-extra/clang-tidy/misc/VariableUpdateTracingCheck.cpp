@@ -61,6 +61,11 @@ AST_MATCHER(QualType, isShortInt) {
   }
 }
 
+AST_MATCHER(VarDecl, hasAlignedAttr) {
+  return Node.hasAttr<AlignedAttr>();
+}
+
+
 
 } // namespace clang
 } // namespace ast_matchers
@@ -523,7 +528,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_global_vardecl,
         is_not_in_array_vardecl,
         is_not_in_fielddecl,
-        is_not_in_enum
+        is_not_in_enum,
+        unless(hasAncestor(varDecl(hasAlignedAttr())))
       ).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueIntegerLiteral")
