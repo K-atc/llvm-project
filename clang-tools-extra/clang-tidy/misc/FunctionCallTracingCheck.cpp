@@ -628,17 +628,39 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleReturnStmt = makeRule(
       returnStmt(
-        // isExpansionInMainFile(),
-        // unless(isExpansionInSystemHeader()),
+        // hasAncestor(functionDecl(hasReturnTypeLoc(typeLoc().bind("ReturnValueType")))),
         hasReturnValue(expr().bind("ReturnValue"))
       ),
       {
         // NOTE: return(ret_val); と書いている例もあるので、安全のためにカッコで囲んでおく
         insertBefore(node("ReturnValue"), cat("(__trace_function_return(")),
         insertAfter(node("ReturnValue"), cat("))")),
+        // insertAfter(node("ReturnValue"), cat(", ", name("ReturnValueType"), "))")),
         add_include,
       },
       return_found("HandleReturnStmt")
+    );
+
+/*
+|   `-ReturnStmt 0xbd4068 <line:456:5, col:17>
+|     `-ImplicitCastExpr 0xbd4050 <col:12, col:17> 'int' <IntegralCast>
+|       `-ImplicitCastExpr 0xbd4038 <col:12, col:17> 'unsigned int' <LValueToRValue>
+|         `-MemberExpr 0xbd4008 <col:12, col:17> 'unsigned int' lvalue bitfield ->ischild 0xbd3b68
+|           `-ImplicitCastExpr 0xbd3ff0 <col:12> 'struct ossl_lib_ctx_st *' <LValueToRValue>
+|             `-DeclRefExpr 0xbd3fd0 <col:12> 'struct ossl_lib_ctx_st *' lvalue ParmVar 0xbd3c70 'ctx' 'struct ossl_lib_ctx_st *'
+*/
+  auto HandleBitFieldReturnStmt = makeRule(
+      returnStmt(
+        has(ignoringParenImpCasts(memberExpr(hasDeclaration(fieldDecl(isBitField()))))),
+        hasReturnValue(expr().bind("ReturnValue"))
+      ),
+      {
+        // NOTE: +(x) で bit-filed をデフォルトの型に変換できる (ref. https://stackoverflow.com/a/62867037)
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return(+(")),
+        insertAfter(node("ReturnValue"), cat(")))")),
+        add_include,
+      },
+      return_found("HandleBitFieldReturnStmt")
     );
 
   // auto HandleMacroUse = makeRule(
@@ -672,6 +694,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
     HandleFunctionDecl0,
 
+    HandleBitFieldReturnStmt,
     HandleReturnStmt,
 
     // Match with CallExpr
