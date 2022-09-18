@@ -21,6 +21,8 @@
 
 using namespace clang::ast_matchers;
 
+#define STARTSWITH(str, x) (str.find(x) == 0)
+
 namespace clang {
 namespace ast_matchers {
 
@@ -33,7 +35,8 @@ AST_MATCHER(CallExpr, returnsVoid) {
 }
 
 AST_MATCHER(FunctionDecl, isBuiltinFunction) {
-  return Node.getNameInfo().getName().getAsString().find("__builtin_") == 0;
+  auto name = Node.getNameInfo().getName().getAsString();
+  return STARTSWITH(name, "__builtin_") || STARTSWITH(name, "__atomic_") || STARTSWITH(name, "__c11_atomic_");
 }
 
 } // namespace clang
