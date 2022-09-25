@@ -91,9 +91,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       )
     ));
   auto is_lvalue = allOf(
-      isLValue(),
-      unless(is_rvalue),
-      unless(hasParent(whileStmt()))
+      // unless(is_rvalue),
+      hasParent(binaryOperator(hasOperatorName("="))),
+      unless(hasParent(whileStmt())),
+      isLValue()
     );
   auto is_referenced_value = hasAncestor(unaryOperator(hasOperatorName("&")));
   auto is_array_subscription = hasAncestor(arraySubscriptExpr());
@@ -361,14 +362,23 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
   // <AssignOperator <DeclRefExpr> <???>>
   // lvalue をハンドルするのみ
+/* int a = (_p = &p)->a;
+|   |-DeclStmt 0x8e0750 <line:208:5, col:25>
+|   | `-VarDecl 0x8e0608 <col:5, col:24> col:9 a 'int' cinit
+|   |   `-ImplicitCastExpr 0x8e0738 <col:13, col:24> 'int' <LValueToRValue>
+|   |     `-MemberExpr 0x8e0708 <col:13, col:24> 'int' lvalue ->a 0x8df918
+|   |       `-ParenExpr 0x8e06e8 <col:13, col:21> 'struct pair *'
+|   |         `-BinaryOperator 0x8e06c8 <col:14, col:20> 'struct pair *' '='
+|   |           |-DeclRefExpr 0x8e0670 <col:14> 'struct pair *' lvalue Var 0x8e0570 '_p' 'struct pair *'
+|   |           `-UnaryOperator 0x8e06b0 <col:19, col:20> 'struct pair *' prefix '&' cannot overflow
+|   |             `-DeclRefExpr 0x8e0690 <col:20> 'struct pair':'struct pair' lvalue Var 0x8dfca0 'p' 'struct pair':'struct pair'
+*/
   auto HandleLvalueDeclRefExpr = makeRule(
       declRefExpr(
         unless(isInMacro()),
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_lvalue,
-        // unless(hasAncestor(varDecl())),
-        unless(hasAncestor(memberExpr())),
         is_not_in_static_vardecl,
         is_not_in_const_vardecl,
         is_not_in_initlistexpr,
@@ -747,6 +757,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 
     // TODO: *v などのポインタ操作をたどるトレース関数
 
+    HandleLvalueMemberExprArraySubscriptExpr,
+    HandleLvalueArraySubscriptExpr,
+    HandleLvalueMemberExpr,
+    HandleLvalueDeclRefExpr,
+
     HandleRvalueNull,
     HandleRvalueSizeofExpr,
     HandleRvalueReferenceExpr,
@@ -756,11 +771,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
-
-    HandleLvalueMemberExprArraySubscriptExpr,
-    HandleLvalueArraySubscriptExpr,
-    HandleLvalueMemberExpr,
-    HandleLvalueDeclRefExpr,
   });
 }
 
