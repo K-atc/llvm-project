@@ -106,20 +106,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       );
     };
   auto change_paramvardecl_begin = insertBefore(node("body"), cat("{ __trace_function_call_enter(); "));
-  auto change_paramvardecl_terminal = insertAfter(node("body"), cat(" }"));
-  auto HandleVoidFunctionDecl = makeRule(
-      functionDecl(
-        isExpansionInMainFile(),
-        returns(voidType()),
-        capture_body
-      ),
-      {
-        change_paramvardecl_begin,
-        insertAfter(node("body"), cat(" __trace_void_function_return(); }")),
-        add_include,
-      },
-      function_found("HandleFunctionDecl0")
-    );
+  auto change_paramvardecl_terminal = insertAfter(node("body"), cat(" __trace_void_function_return(); }"));
   auto HandleFunctionDecl0 = makeRule(
       functionDecl(
         isExpansionInMainFile(),
@@ -695,8 +682,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   return applyFirst({
     HandleCXXConstructorDecl,
-
-    HandleVoidFunctionDecl,
 
     HandleFunctionDecl12,
     HandleFunctionDecl11,
