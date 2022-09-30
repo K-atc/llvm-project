@@ -476,6 +476,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_initlistexpr,
         is_not_increment,
         unless(is_referenced_value),
+        child_does_not_have_record,
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
