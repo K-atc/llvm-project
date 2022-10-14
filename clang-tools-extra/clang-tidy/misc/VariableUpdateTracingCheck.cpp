@@ -696,7 +696,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |       |     `-DeclRefExpr 0x815978 <col:13> 'struct header *' lvalue Var 0x814570 'h' 'struct header *'
 |   |       `-IntegerLiteral 0x8159e0 <col:22> 'int' 0
 */
-  auto HandleRvalueMemberExpr = makeRule(
+  auto HandleRvalueFirstLevelMemberExpr = makeRule(
       memberExpr(
         unless(isInMacro()),
         isExpansionInMainFile(),
@@ -711,7 +711,6 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         capture_record_type
       ).bind("rvalue"),
       {
-        // NOTE: メンバー参照が連続する場合（v.a->b）はノードを含めて書き換えた方が楽
         insertBefore(
           node("rvalue"),
           cat("__trace_member_rvalue(")
@@ -722,7 +721,37 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      assignment_found("HandleRvalueMemberExpr")
+      assignment_found("HandleRvalueFirstLevelMemberExpr")
+    );
+
+  auto HandleRvalueSecondLevelMemberExpr = makeRule(
+      memberExpr(ignoringParenImpCasts(
+        memberExpr(
+          unless(isInMacro()),
+          isExpansionInMainFile(),
+          unless(isExpansionInSystemHeader()),
+          is_rvalue,
+          unless(is_referenced_value),
+          is_not_in_initlistexpr,
+          is_not_increment,
+          is_not_pointer_operation,
+          unless(is_bitfield),
+          member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+          capture_record_type
+        ).bind("rvalue")
+      )),
+      {
+        insertBefore(
+          node("rvalue"),
+          cat("__trace_member_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"),
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
+        ),
+        add_include,
+      },
+      assignment_found("HandleRvalueSecondLevelMemberExpr")
     );
 
   auto HandleRvalueReferenceExpr = makeRule(
@@ -768,7 +797,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRvalueReferenceExpr,
     HandleRvalueMemberExprArraySubscriptExpr,
     HandleRvalueArraySubscriptExpr,
-    HandleRvalueMemberExpr,
+    HandleRvalueFirstLevelMemberExpr,
+    HandleRvalueSecondLevelMemberExpr,
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
