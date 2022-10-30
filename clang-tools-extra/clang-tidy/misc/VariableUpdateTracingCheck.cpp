@@ -516,6 +516,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x1381a10 <col:9> 'unsigned int' <IntegralCast>
 |   |   `-IntegerLiteral 0x13819f0 <col:9> 'int' 0
 */
+/*
+|   |   `-CStyleCastExpr 0x1bc1788 <col:10, col:18> 'void *' <NullToPointer>
+|   |     `-IntegerLiteral 0x1bc1750 <col:18> 'int' 0
+*/
   // FIXME: マイナス値が -(____trace_variable_rvalue(1, const int)) になってしまう。
   auto change_rvalue_const_int = {
       insertBefore(
@@ -540,6 +544,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_array_vardecl,
         is_not_in_fielddecl,
         is_not_in_enum,
+        unless(hasParent(cStyleCastExpr(hasCastKind(CK_NullToPointer)))),
         unless(hasAncestor(varDecl(hasAlignedAttr())))
       ).bind("rvalue"),
       change_rvalue_const_int,
@@ -724,6 +729,40 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       assignment_found("HandleRvalueFirstLevelMemberExpr")
     );
 
+  auto HandleRvalueFirstAndSecondLevelMemberExpr = makeRule(
+      memberExpr(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        is_rvalue,
+        unless(is_referenced_value),
+        is_not_in_initlistexpr,
+        is_not_increment,
+        is_not_pointer_operation,
+        unless(is_bitfield),
+        child_does_not_have_record,
+        member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
+        // NOTE: has() で囲わないと、Top LevelのmemberExprとマッチしてしまう
+        has(ignoringParenImpCasts(
+          memberExpr(
+            member(fieldDecl(hasTypeLoc(typeLoc().bind("parent_type"))))
+          ).bind("parent")
+        ))
+      ).bind("rvalue"),
+      {
+        insertBefore(
+          node("rvalue"),
+          cat("__trace_member_rvalue(")
+        ),
+        insertAfter(
+          node("rvalue"),
+          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("parent"), ", (", name("parent_type"), "))")
+        ),
+        add_include,
+      },
+      assignment_found("HandleRvalueFirstAndSecondLevelMemberExpr")
+    );
+
   auto HandleRvalueSecondLevelMemberExpr = makeRule(
       memberExpr(ignoringParenImpCasts(
         memberExpr(
@@ -797,6 +836,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
     HandleRvalueReferenceExpr,
     HandleRvalueMemberExprArraySubscriptExpr,
     HandleRvalueArraySubscriptExpr,
+    HandleRvalueFirstAndSecondLevelMemberExpr,
     HandleRvalueFirstLevelMemberExpr,
     HandleRvalueSecondLevelMemberExpr,
     HandleRvalueDeclRefExpr,
