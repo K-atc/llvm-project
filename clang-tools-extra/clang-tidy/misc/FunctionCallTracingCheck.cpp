@@ -474,8 +474,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(isInMacro()),
         unless(isExpansionInSystemHeader()),
         isExpansionInMainFile(),
-        returnsVoid(),
         unless(callee(functionDecl(isBuiltinFunction()))),
+        returnsVoid(),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -497,14 +497,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | `-IntegerLiteral 0x22697a8 <col:7> 'int' 1
 */
   auto callexpr_with_return_value = callExpr(
+      unless(callee(functionDecl(isBuiltinFunction()))),
       unless(returnsVoid())
     ).bind("caller");
   auto HandleUnuseReturnValueCallExpr = makeRule(
       stmt(anyOf(
-        ifStmt(anyOf(
-          hasThen(callexpr_with_return_value), 
-          hasElse(callexpr_with_return_value)
-        )),
+        ifStmt(hasThen(callexpr_with_return_value)),
+        ifStmt(hasElse(callexpr_with_return_value)),
         labelStmt(callexpr_with_return_value),
         compoundStmt(callexpr_with_return_value)
       )),

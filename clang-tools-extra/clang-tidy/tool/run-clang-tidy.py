@@ -323,7 +323,7 @@ def main():
   files = set([make_absolute(entry['file'], entry['directory'])
            for entry in database])
   # コンパイルエラーがうざいので措置
-  files = set(filter(lambda path: path.endswith(".c"), files))
+  # files = set(filter(lambda path: path.endswith(".c"), files))
   assert(len(files) > 0, "No files to fix!!")
 
   max_task = args.j
