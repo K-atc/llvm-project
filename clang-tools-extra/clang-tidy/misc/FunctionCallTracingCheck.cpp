@@ -39,6 +39,19 @@ AST_MATCHER(FunctionDecl, isBuiltinFunction) {
   return STARTSWITH(name, "__builtin_") || STARTSWITH(name, "__atomic_") || STARTSWITH(name, "__c11_atomic_");
 }
 
+// AST_MATCHER(Expr, isFirstChildren) {
+//   const ASTContext &Context = Finder->getASTContext();
+//   auto Parents = Context.getParents(Node);
+//   if (Parents.empty())
+//     return false;
+//   const auto *Parent = Parents[0].get<Stmt>();
+//   if (!Parent)
+//     return false;
+//   for (const Stmt *Child : Parent->children()) {
+//     return *dyn_cast<Expr>(Child) == Node;
+//   }
+// }
+
 } // namespace clang
 } // namespace ast_matchers
 
@@ -459,6 +472,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         isExpansionInMainFile(),
         unless(returnsVoid()),
         unless(callee(functionDecl(isBuiltinFunction()))),
+        unless(cxxOperatorCallExpr()),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -515,15 +529,15 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       cat("HandleUnuseReturnValueCallExpr")
     );
 
+/*
+|       `-CXXMemberCallExpr 0xfcd050 <col:13, col:26> 'int'
+|         |-MemberExpr 0xfccfe0 <col:13, col:18> '<bound member function type>' .add 0xfcbe70
+|         | `-DeclRefExpr 0xfccfc0 <col:13> 'Calculator' lvalue Var 0xfcc0e8 'calc' 'Calculator'
+|         |-IntegerLiteral 0xfcd010 <col:22> 'int' 1
+|         `-IntegerLiteral 0xfcd030 <col:25> 'int' 2
+*/
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
   auto HandleCallExprArgument = makeRule(
-      // NOTE: 残念ながら、関数呼び出しをトレースするために CallExpr とマッチしてはいけない
-      // callExpr(
-      //   forEachArgumentWithParam(
-      //     expr().bind("argument"),
-      //     parmVarDecl(hasType(type()))
-      //   )
-      // ),
       stmt(
         // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
         unless(is_function_pointer),
@@ -596,9 +610,24 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       cat("HandleFunctionCallCallExprArgument")
     );
 
+/* `reference_count = 1`
+| |   `-CXXOperatorCallExpr 0x2052a60 <line:27:9, col:27> 'std::__atomic_base<int>::__int_type':'int' '='
+| |     |-ImplicitCastExpr 0x2052a48 <col:25> 'std::__atomic_base<int>::__int_type (*)(std::__atomic_base<int>::__int_type) noexcept' <FunctionToPointerDecay>
+| |     | `-DeclRefExpr 0x20529c8 <col:25> 'std::__atomic_base<int>::__int_type (std::__atomic_base<int>::__int_type) noexcept' lvalue CXXMethod 0x1fd7070 'operator=' 'std::__atomic_base<int>::__int_type (std::__atomic_base<int>::__int_type) noexcept'
+| |     |-ImplicitCastExpr 0x20529a8 <col:9> 'std::__atomic_base<int>' lvalue <UncheckedDerivedToBase (__atomic_base)>
+| |     | `-MemberExpr 0x2052440 <col:9> 'std::atomic_int':'std::atomic<int>' lvalue ->reference_count 0x2051ac0
+| |     |   `-CXXThisExpr 0x2052430 <col:9> 'Array *' implicit this
+| |     `-IntegerLiteral 0x2052470 <col:27> 'int' 1
+*/
   auto HandleCalleeFunctionDeclRefExpr = makeRule(
       // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
       declRefExpr(
+        unless(hasParent(
+          implicitCastExpr(
+            hasCastKind(CK_FunctionToPointerDecay),
+            hasParent(cxxOperatorCallExpr())
+          )
+        )),
         hasAncestor(implicitCastExpr(
           hasCastKind(CK_FunctionToPointerDecay),
           hasParent(callExpr(

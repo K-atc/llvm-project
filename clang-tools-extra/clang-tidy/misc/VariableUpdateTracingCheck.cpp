@@ -343,6 +343,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       varDecl(
         isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
         unless(isExpansionInSystemHeader()),
+        unless(hasParent(cxxForRangeStmt())),
         hasDescendant(expr()), // 代入を伴うこと
         hasParent(declStmt( // 文法破壊防止
           unless(hasParent(forStmt())),
@@ -462,6 +463,37 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |   | |       `-UnaryOperator 0x235f0b8 <col:32, col:33> 'unsigned short *' prefix '&' cannot overflow
 |   |   | |         `-DeclRefExpr 0x235f068 <col:33> 'unsigned short' lvalue Var 0x235efb0 's' 'unsigned short'
 */
+/* `for (auto i : array) {}`
+|   `-CXXForRangeStmt 0x1508ec0 <line:17:5, line:19:5>
+|     |-<<<NULL>>>
+|     |-DeclStmt 0x1507830 <line:17:19>
+|     | `-VarDecl 0x15075a0 <col:19> col:19 implicit used __range1 'int (&)[3]' cinit
+|     |   `-DeclRefExpr 0x1507420 <col:19> 'int[3]' lvalue Var 0x1507230 'array' 'int[3]'
+|     |-DeclStmt 0x1507c20 <col:17>
+|     | `-VarDecl 0x15078c8 <col:17> col:17 implicit used __begin1 'int *':'int *' cinit
+|     |   `-ImplicitCastExpr 0x1507af0 <col:17> 'int *' <ArrayToPointerDecay>
+|     |     `-DeclRefExpr 0x1507848 <col:17> 'int[3]' lvalue Var 0x15075a0 '__range1' 'int (&)[3]'
+|     |-DeclStmt 0x1507c38 <col:17>
+|     | `-VarDecl 0x1507970 <col:17, col:19> col:17 implicit used __end1 'int *':'int *' cinit
+|     |   `-BinaryOperator 0x1507b40 <col:17, col:19> 'int *' '+'
+|     |     |-ImplicitCastExpr 0x1507b28 <col:17> 'int *' <ArrayToPointerDecay>
+|     |     | `-DeclRefExpr 0x1507868 <col:17> 'int[3]' lvalue Var 0x15075a0 '__range1' 'int (&)[3]'
+|     |     `-IntegerLiteral 0x1507b08 <col:19> 'long' 3
+|     |-BinaryOperator 0x1507cc0 <col:17> 'bool' '!='
+|     | |-ImplicitCastExpr 0x1507c90 <col:17> 'int *':'int *' <LValueToRValue>
+|     | | `-DeclRefExpr 0x1507c50 <col:17> 'int *':'int *' lvalue Var 0x15078c8 '__begin1' 'int *':'int *'
+|     | `-ImplicitCastExpr 0x1507ca8 <col:17> 'int *':'int *' <LValueToRValue>
+|     |   `-DeclRefExpr 0x1507c70 <col:17> 'int *':'int *' lvalue Var 0x1507970 '__end1' 'int *':'int *'
+|     |-UnaryOperator 0x1507d00 <col:17> 'int *':'int *' lvalue prefix '++'
+|     | `-DeclRefExpr 0x1507ce0 <col:17> 'int *':'int *' lvalue Var 0x15078c8 '__begin1' 'int *':'int *'
+|     |-DeclStmt 0x1507518 <col:10, col:24>
+|     | `-VarDecl 0x15074b0 <col:10, col:17> col:15 i 'int':'int' cinit
+|     |   `-ImplicitCastExpr 0x1507e50 <col:17> 'int' <LValueToRValue>
+|     |     `-UnaryOperator 0x1507d50 <col:17> 'int' lvalue prefix '*' cannot overflow
+|     |       `-ImplicitCastExpr 0x1507d38 <col:17> 'int *':'int *' <LValueToRValue>
+|     |         `-DeclRefExpr 0x1507d18 <col:17> 'int *':'int *' lvalue Var 0x15078c8 '__begin1' 'int *':'int *'
+|     `-CompoundStmt 0x1508f20 <col:26, line:19:5>
+*/
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
@@ -477,6 +509,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_increment,
         unless(is_referenced_value),
         child_does_not_have_record,
+        allOf(unless(hasAncestor(cxxForRangeStmt())), hasAncestor(compoundStmt())),
         anyOf(
           // 一時変数
           to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
