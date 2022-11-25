@@ -347,6 +347,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         hasDescendant(expr()), // 代入を伴うこと
         hasParent(declStmt( // 文法破壊防止
           unless(hasParent(forStmt())),
+          unless(hasParent(cxxForRangeStmt())),
           hasSingleDecl(varDecl())
         ).bind("DeclStmt")),
         hasTypeLoc(typeLoc().bind("lvalue_type"))

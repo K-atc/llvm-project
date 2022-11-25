@@ -124,6 +124,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        unless(hasParent(cxxRecordDecl())),
         capture_body
       ),
       {
@@ -473,6 +474,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         unless(returnsVoid()),
         unless(callee(functionDecl(isBuiltinFunction()))),
         unless(cxxOperatorCallExpr()),
+        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+        unless(hasAncestor(cxxForRangeStmt())),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -541,6 +544,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       stmt(
         // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
         unless(is_function_pointer),
+        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+        unless(hasAncestor(cxxForRangeStmt())),
+        unless(hasParent(cxxMemberCallExpr())),
+        unless(hasParent(cxxOperatorCallExpr())),
         hasParent(callExpr(
           unless(callee(functionDecl(isBuiltinFunction()))),
           unless(isInMacro())
@@ -599,6 +606,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleFunctionCallCallExprArgument = makeRule(
       callExpr(
         unless(isInMacro()),
+        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+        unless(hasAncestor(cxxForRangeStmt())),
         hasParent(callExpr()),
         callee(expr().bind("callee"))
       ).bind("argument"),
@@ -659,6 +668,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleReturnStmt = makeRule(
       returnStmt(
+        unless(hasAncestor(cxxRecordDecl())),
         // hasAncestor(functionDecl(hasReturnTypeLoc(typeLoc().bind("ReturnValueType")))),
         hasReturnValue(expr().bind("ReturnValue"))
       ),
@@ -694,6 +704,30 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       return_found("HandleBitFieldReturnStmt")
     );
 
+/* `return std::nullptr;`
+|   `-ReturnStmt 0x1fe6218 <line:26:5, col:12>
+|     `-ExprWithCleanups 0x1fe6200 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>'
+|       `-CXXConstructExpr 0x1fe61d0 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept' elidable
+|         `-MaterializeTemporaryExpr 0x1fe61b8 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' xvalue
+|           `-CXXBindTemporaryExpr 0x1fd85a0 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' (CXXTemporary 0x1fd85a0)
+|             `-ImplicitCastExpr 0x1fd8580 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' <ConstructorConversion>
+|               `-CXXConstructExpr 0x1fd8550 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::nullptr_t) noexcept'
+|                 `-CXXNullPtrLiteralExpr 0x1fd6950 <col:12> 'std::nullptr_t'
+*/
+  auto HandleCXXConstructExprReturnStmt = makeRule(
+      returnStmt(
+        hasDescendant(cxxConstructExpr(
+          has(expr().bind("ReturnValue"))
+        ))
+      ),
+      {
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return(")),
+        insertAfter(node("ReturnValue"), cat("))")),
+        add_include,
+      },
+      return_found("HandleCXXConstructExprReturnStmt")
+    );
+
   // auto HandleMacroUse = makeRule(
   //     expr(
   //       isInMacro(),
@@ -726,6 +760,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl0,
 
     HandleBitFieldReturnStmt,
+    HandleCXXConstructExprReturnStmt,
     HandleReturnStmt,
 
     // Match with CallExpr
