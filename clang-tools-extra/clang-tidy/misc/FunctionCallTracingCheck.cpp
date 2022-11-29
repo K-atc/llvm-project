@@ -496,10 +496,31 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       cat("HandleCallExpr")
     );
 
-  auto HandleExprWithCleanupsCallExpr = makeRule(
+/* `auto a = std::make_unique<Object>(objNull);`
+|   |-DeclStmt 0x24ebf48 <line:70:5, col:47>
+|   | `-VarDecl 0x24587e8 <col:5, col:46> col:10 used a 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' cinit destroyed
+|   |   `-ExprWithCleanups 0x24ebf30 <col:14, col:46> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>'
+|   |     `-CXXConstructExpr 0x24ebf00 <col:14, col:46> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' 'void (std::unique_ptr<Object> &&) noexcept' elidable
+|   |       `-MaterializeTemporaryExpr 0x24eb938 <col:14, col:46> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' xvalue
+|   |         `-CXXBindTemporaryExpr 0x24e4cd0 <col:14, col:46> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' (CXXTemporary 0x24e4cd0)
+|   |           `-CallExpr 0x2459940 <col:14, col:46> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>'
+|   |             |-ImplicitCastExpr 0x2459928 <col:14, col:37> 'typename _MakeUniq<Object>::__single_object (*)(ObjType &&)' <FunctionToPointerDecay>
+|   |             | `-DeclRefExpr 0x2459868 <col:14, col:37> 'typename _MakeUniq<Object>::__single_object (ObjType &&)' lvalue Function 0x24594a8 'make_unique' 'typename _MakeUniq<Object>::__single_object (ObjType &&)' (FunctionTemplate 0x21acc38 'make_unique')
+|   |             `-MaterializeTemporaryExpr 0x24e4cb0 <col:39> 'ObjType':'ObjType' xvalue
+|   |               `-DeclRefExpr 0x2458928 <col:39> 'ObjType' EnumConstant 0x24577c0 'objNull' 'ObjType'
+*/
+/* `std::unique_ptr<Object> b = std::move(a);`
+|   `-DeclStmt 0x199ca88 <line:71:5, col:45>
+|     `-VarDecl 0x199b158 <col:5, col:44> col:29 b 'std::unique_ptr<Object>':'std::unique_ptr<Object>' cinit destroyed
+|       `-CXXConstructExpr 0x199ca58 <col:33, col:44> 'std::unique_ptr<Object>':'std::unique_ptr<Object>' 'void (std::unique_ptr<Object> &&) noexcept'
+|         `-CallExpr 0x199bc30 <col:33, col:44> 'typename std::remove_reference<unique_ptr<Object> &>::type':'std::unique_ptr<Object>' xvalue
+|           |-ImplicitCastExpr 0x199bc18 <col:33, col:38> 'typename std::remove_reference<unique_ptr<Object> &>::type &&(*)(std::unique_ptr<Object> &) noexcept' <FunctionToPointerDecay>
+|           | `-DeclRefExpr 0x199b9e8 <col:33, col:38> 'typename std::remove_reference<unique_ptr<Object> &>::type &&(std::unique_ptr<Object> &) noexcept' lvalue Function 0x199b8e8 'move' 'typename std::remove_reference<unique_ptr<Object> &>::type &&(std::unique_ptr<Object> &) noexcept' (FunctionTemplate 0xd73b08 'move')
+|           `-DeclRefExpr 0x199b230 <col:43> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' lvalue Var 0x1907a08 'a' 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>'
+*/
+  auto HandleCXXConstructExprCallExpr = makeRule(
       callExpr(
-        hasAncestor(exprWithCleanups()),
-        ignores_for_callExpr,
+        hasAncestor(cxxConstructExpr()),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -507,7 +528,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("caller"), cat(", ", node("callee"), ")")),
         add_include,
       },
-      cat("HandleExprWithCleanupsCallExpr")
+      cat("HandleCXXConstructExprCallExpr")
     );
 
   auto HandleVoidCallExpr = makeRule(
@@ -777,9 +798,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
     // Match with CallExpr
     HandleFunctionCallCallExprArgument,
+    HandleCXXConstructExprCallExpr,
     HandleCalleeFunctionDeclRefExpr,
-    // HandleCalleeFunctionDeclRefExpr2,
-    HandleExprWithCleanupsCallExpr,
     HandleCallExpr,
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
