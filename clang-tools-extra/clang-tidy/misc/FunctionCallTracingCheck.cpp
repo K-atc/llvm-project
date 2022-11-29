@@ -466,16 +466,19 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x23cac40 <col:5> 'void (*)()' <LValueToRValue>
 |   |   `-DeclRefExpr 0x23cac20 <col:5> 'void (*)()' lvalue Var 0x23cab68 'var_void_f' 'void (*)()'
 */
+  auto ignores_for_callExpr = allOf(
+    unless(isInMacro()),
+    unless(isExpansionInSystemHeader()),
+    isExpansionInMainFile(),
+    unless(returnsVoid()),
+    unless(callee(functionDecl(isBuiltinFunction()))),
+    unless(cxxOperatorCallExpr()),
+    unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+    unless(hasAncestor(cxxForRangeStmt()))
+  );
   auto HandleCallExpr = makeRule(
       callExpr(
-        unless(isInMacro()),
-        unless(isExpansionInSystemHeader()),
-        isExpansionInMainFile(),
-        unless(returnsVoid()),
-        unless(callee(functionDecl(isBuiltinFunction()))),
-        unless(cxxOperatorCallExpr()),
-        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
-        unless(hasAncestor(cxxForRangeStmt())),
+        ignores_for_callExpr,
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -484,6 +487,20 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         add_include,
       },
       cat("HandleCallExpr")
+    );
+
+  auto HandleExprWithCleanupsCallExpr = makeRule(
+      callExpr(
+        hasAncestor(exprWithCleanups()),
+        ignores_for_callExpr,
+        callee(expr().bind("callee"))
+      ).bind("caller"),
+      {
+        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups(")),
+        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        add_include,
+      },
+      cat("HandleExprWithCleanupsCallExpr")
     );
 
   auto HandleVoidCallExpr = makeRule(
@@ -767,6 +784,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionCallCallExprArgument,
     HandleCalleeFunctionDeclRefExpr,
     // HandleCalleeFunctionDeclRefExpr2,
+    HandleExprWithCleanupsCallExpr,
     HandleCallExpr,
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
