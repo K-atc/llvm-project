@@ -84,10 +84,17 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 | | | `-ParmVarDecl 0x164e378 <col:8> col:8 'const tiffis_data &'
 [...]
 */
+  // TODO: コンストラクタのトレース
   auto HandleCXXConstructorDecl = makeRule(
     cxxConstructorDecl(),
     add_include, // Do nothing
     function_found("HandleCXXConstructorDecl")
+  );
+
+  auto HandleDefaultedCXXDestructorDecl = makeRule(
+    cxxDestructorDecl(isDefaulted()),
+    add_include, // Do nothing
+    function_found("HandleDefaultedCXXDestructorDecl")
   );
 
 /*
@@ -557,14 +564,17 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |         `-IntegerLiteral 0xfcd030 <col:25> 'int' 2
 */
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
+  auto ignores_for_CallExprArgument = allOf(
+      unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+      unless(hasAncestor(cxxForRangeStmt())),
+      unless(hasParent(cxxMemberCallExpr())),
+      unless(hasParent(cxxOperatorCallExpr()))
+  );
   auto HandleCallExprArgument = makeRule(
       stmt(
         // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
         unless(is_function_pointer),
-        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
-        unless(hasAncestor(cxxForRangeStmt())),
-        unless(hasParent(cxxMemberCallExpr())),
-        unless(hasParent(cxxOperatorCallExpr())),
+        ignores_for_CallExprArgument,
         hasParent(callExpr(
           unless(callee(functionDecl(isBuiltinFunction()))),
           unless(isInMacro())
@@ -622,9 +632,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 */
   auto HandleFunctionCallCallExprArgument = makeRule(
       callExpr(
-        unless(isInMacro()),
-        unless(hasAncestor(forStmt())), // ゆるすぎるかも…
-        unless(hasAncestor(cxxForRangeStmt())),
+        ignores_for_CallExprArgument,
         hasParent(callExpr()),
         callee(expr().bind("callee"))
       ).bind("argument"),
@@ -738,29 +746,16 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         ))
       ),
       {
-        insertBefore(node("ReturnValue"), cat("(__trace_function_return(")),
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return_with_cleanups(")),
         insertAfter(node("ReturnValue"), cat("))")),
         add_include,
       },
       return_found("HandleCXXConstructExprReturnStmt")
     );
 
-  // auto HandleMacroUse = makeRule(
-  //     expr(
-  //       isInMacro(),
-  //       isExpansionInMainFile(),
-  //       unless(isExpansionInSystemHeader())
-  //     ).bind("expr"),
-  //     {
-  //       insertBefore(node("expr"), cat("__trace_macro_use(")),
-  //       insertAfter(node("expr"), cat(")")),
-  //       add_include,
-  //     },
-  //     cat("HandleMacroUse")
-  //   );
-
   return applyFirst({
     HandleCXXConstructorDecl,
+    HandleDefaultedCXXDestructorDecl,
 
     HandleFunctionDecl12,
     HandleFunctionDecl11,
