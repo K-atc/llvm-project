@@ -39,6 +39,11 @@ AST_MATCHER(FunctionDecl, isBuiltinFunction) {
   return STARTSWITH(name, "__builtin_") || STARTSWITH(name, "__atomic_") || STARTSWITH(name, "__c11_atomic_");
 }
 
+AST_MATCHER_P(DeclRefExpr, hasNameStartsWith, std::string, value) {
+  std::cerr << "[*] hasNameStartsWith: " << Node.getNameInfo().getName().getAsString() << std::endl;
+  return STARTSWITH(Node.getNameInfo().getName().getAsString(), value);
+}
+
 // AST_MATCHER(Expr, isFirstChildren) {
 //   const ASTContext &Context = Finder->getASTContext();
 //   auto Parents = Context.getParents(Node);
@@ -495,6 +500,23 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       },
       cat("HandleCallExpr")
     );
+/*
+| |     `-CallExpr 0x2916b10 <col:31, col:42> 'typename std::remove_reference<unique_ptr<int> &>::type':'std::unique_ptr<int>' xvalue
+| |       |-ImplicitCastExpr 0x2916af8 <col:31, col:36> 'typename std::remove_reference<unique_ptr<int> &>::type &&(*)(std::unique_ptr<int> &) noexcept' <FunctionToPointerDecay>
+| |       | `-DeclRefExpr 0x29168c8 <col:31, col:36> 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' lvalue Function 0x29167c8 'move' 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' (FunctionTemplate 0x1d59088 'move')
+| |       `-DeclRefExpr 0x2916100 <col:41> 'std::unique_ptr<int>':'std::unique_ptr<int>' lvalue ParmVar 0x28e61a0 'x' 'std::unique_ptr<int>':'std::unique_ptr<int>'
+*/
+  auto HandleExplicitMoveCallExpr = makeRule(
+      callExpr(callee(
+        functionDecl(hasName("move")).bind("callee")
+      )).bind("caller"),
+      {
+        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups(")),
+        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        add_include,
+      },
+      cat("HandleExplicitMoveCallExpr")
+    );
 
 /* `auto a = std::make_unique<Object>(objNull);`
 |   |-DeclStmt 0x24ebf48 <line:70:5, col:47>
@@ -509,18 +531,29 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   |             `-MaterializeTemporaryExpr 0x24e4cb0 <col:39> 'ObjType':'ObjType' xvalue
 |   |               `-DeclRefExpr 0x2458928 <col:39> 'ObjType' EnumConstant 0x24577c0 'objNull' 'ObjType'
 */
-/* `std::unique_ptr<Object> b = std::move(a);`
-|   `-DeclStmt 0x199ca88 <line:71:5, col:45>
-|     `-VarDecl 0x199b158 <col:5, col:44> col:29 b 'std::unique_ptr<Object>':'std::unique_ptr<Object>' cinit destroyed
-|       `-CXXConstructExpr 0x199ca58 <col:33, col:44> 'std::unique_ptr<Object>':'std::unique_ptr<Object>' 'void (std::unique_ptr<Object> &&) noexcept'
-|         `-CallExpr 0x199bc30 <col:33, col:44> 'typename std::remove_reference<unique_ptr<Object> &>::type':'std::unique_ptr<Object>' xvalue
-|           |-ImplicitCastExpr 0x199bc18 <col:33, col:38> 'typename std::remove_reference<unique_ptr<Object> &>::type &&(*)(std::unique_ptr<Object> &) noexcept' <FunctionToPointerDecay>
-|           | `-DeclRefExpr 0x199b9e8 <col:33, col:38> 'typename std::remove_reference<unique_ptr<Object> &>::type &&(std::unique_ptr<Object> &) noexcept' lvalue Function 0x199b8e8 'move' 'typename std::remove_reference<unique_ptr<Object> &>::type &&(std::unique_ptr<Object> &) noexcept' (FunctionTemplate 0xd73b08 'move')
-|           `-DeclRefExpr 0x199b230 <col:43> 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>' lvalue Var 0x1907a08 'a' 'typename _MakeUniq<Object>::__single_object':'std::unique_ptr<Object>'
+/* `obj1 = dict->lookup("S");`
+|   |-ExprWithCleanups 0x3d5a4f8 <line:615:5, col:28> 'Object' lvalue
+|   | `-CXXOperatorCallExpr 0x3d5a4c0 <col:5, col:28> 'Object' lvalue '='
+|   |   |-ImplicitCastExpr 0x3d5a4a8 <col:10> 'Object &(*)(Object &&) noexcept' <FunctionToPointerDecay>
+|   |   | `-DeclRefExpr 0x3d5a488 <col:10> 'Object &(Object &&) noexcept' lvalue CXXMethod 0x1d83770 'operator=' 'Object &(Object &&) noexcept'
+|   |   |-DeclRefExpr 0x3d5a2c0 <col:5> 'Object' lvalue Var 0x3d59ea0 'obj1' 'Object'
+|   |   `-MaterializeTemporaryExpr 0x3d5a470 <col:12, col:28> 'Object' xvalue
+|   |     `-CXXBindTemporaryExpr 0x3d5a450 <col:12, col:28> 'Object' (CXXTemporary 0x3d5a450)
+|   |       `-CXXMemberCallExpr 0x3d5a3c8 <col:12, col:28> 'Object'
+|   |         |-MemberExpr 0x3d5a398 <col:12, col:18> '<bound member function type>' ->lookup 0x22eb730
+|   |         | `-ImplicitCastExpr 0x3d5a3f8 <col:12> 'const Dict *' <NoOp>
+|   |         |   `-ImplicitCastExpr 0x3d5a300 <col:12> 'Dict *' <LValueToRValue>
+|   |         |     `-DeclRefExpr 0x3d5a2e0 <col:12> 'Dict *' lvalue ParmVar 0x3d59cb0 'dict' 'Dict *'
+|   |         |-ImplicitCastExpr 0x3d5a410 <col:25> 'const char *' <ArrayToPointerDecay>
+|   |         | `-StringLiteral 0x3d5a378 <col:25> 'const char[2]' lvalue "S"
+|   |         `-CXXDefaultArgExpr 0x3d5a428 <<invalid sloc>> 'int'
 */
-  auto HandleCXXConstructExprCallExpr = makeRule(
+  auto HandleImplicitCleanupsCallExpr = makeRule(
       callExpr(
-        hasAncestor(cxxConstructExpr()),
+        anyOf(
+          hasAncestor(cxxConstructExpr()),
+          hasAncestor(exprWithCleanups())
+        ),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -528,7 +561,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("caller"), cat(", ", node("callee"), ")")),
         add_include,
       },
-      cat("HandleCXXConstructExprCallExpr")
+      cat("HandleImplicitCleanupsCallExpr")
     );
 
   auto HandleVoidCallExpr = makeRule(
@@ -665,6 +698,32 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       cat("HandleFunctionCallCallExprArgument")
     );
 
+/* `return std::move(this->array.back());`
+| |   `-ReturnStmt 0x15aa068 <line:50:9, col:44>
+| |     `-CXXConstructExpr 0x15aa038 <col:16, col:44> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept'
+| |       `-CallExpr 0x15a9200 <col:16, col:44> 'typename std::remove_reference<unique_ptr<int> &>::type':'std::unique_ptr<int>' xvalue
+| |         |-ImplicitCastExpr 0x15a91e8 <col:16, col:21> 'typename std::remove_reference<unique_ptr<int> &>::type &&(*)(std::unique_ptr<int> &) noexcept' <FunctionToPointerDecay>
+| |         | `-DeclRefExpr 0x15a91b0 <col:16, col:21> 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' lvalue Function 0x15a8c38 'move' 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' (FunctionTemplate 0x9eb088 'move')
+| |         `-CXXMemberCallExpr 0x15a9158 <col:26, col:43> '__gnu_cxx::__alloc_traits<std::allocator<std::unique_ptr<int>>, std::unique_ptr<int>>::value_type':'std::unique_ptr<int>' lvalue
+| |           `-MemberExpr 0x15a9128 <col:26, col:38> '<bound member function type>' .back 0x1599ec8
+| |             `-MemberExpr 0x15a9098 <col:26, col:32> 'std::vector<std::unique_ptr<int>>':'std::vector<std::unique_ptr<int>>' lvalue ->array 0x15a6260
+| |               `-CXXThisExpr 0x15a9088 <col:26> 'Array *' this
+*/
+  auto HandleCXXConstructExprFunctionCallCallExprArgument = makeRule(
+      callExpr(
+        ignores_for_CallExprArgument,
+        hasParent(callExpr()),
+        hasAncestor(cxxConstructExpr()),
+        callee(expr().bind("callee"))
+      ).bind("argument"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call_with_cleanups2(")),
+        insertAfter(node("argument"), cat(",", node("callee"), "))")),
+        add_include,
+      },
+      cat("HandleCXXConstructExprFunctionCallCallExprArgument")
+    );
+
 /* `reference_count = 1`
 | |   `-CXXOperatorCallExpr 0x2052a60 <line:27:9, col:27> 'std::__atomic_base<int>::__int_type':'int' '='
 | |     |-ImplicitCastExpr 0x2052a48 <col:25> 'std::__atomic_base<int>::__int_type (*)(std::__atomic_base<int>::__int_type) noexcept' <FunctionToPointerDecay>
@@ -797,8 +856,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleReturnStmt,
 
     // Match with CallExpr
+    HandleCXXConstructExprFunctionCallCallExprArgument,
     HandleFunctionCallCallExprArgument,
-    HandleCXXConstructExprCallExpr,
+    HandleExplicitMoveCallExpr,
+    HandleImplicitCleanupsCallExpr,
     HandleCalleeFunctionDeclRefExpr,
     HandleCallExpr,
     HandleVoidCallExpr,
