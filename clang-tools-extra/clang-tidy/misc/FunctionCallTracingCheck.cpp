@@ -548,12 +548,24 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   |         | `-StringLiteral 0x3d5a378 <col:25> 'const char[2]' lvalue "S"
 |   |         `-CXXDefaultArgExpr 0x3d5a428 <<invalid sloc>> 'int'
 */
+/* 除外したいケース `array.push(std::move(a));`
+| `-CompoundStmt 0x13c3388 <col:18, line:63:1>
+[...]
+|   |-ExprWithCleanups 0x13c22c0 <line:61:5, col:28> 'void'
+|   | `-CXXMemberCallExpr 0x13c1430 <col:5, col:28> 'void'
+|   |   |-MemberExpr 0x13c1258 <col:5, col:11> '<bound member function type>' .push 0x138d658
+|   |   | `-DeclRefExpr 0x13c1238 <col:5> 'Array' lvalue Var 0x13bf1a0 'array' 'Array'
+|   |   `-CXXBindTemporaryExpr 0x13c22a0 <col:16, col:27> 'std::unique_ptr<int>':'std::unique_ptr<int>' (CXXTemporary 0x13c22a0)
+|   |     `-CXXConstructExpr 0x13c2268 <col:16, col:27> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept'
+|   |       `-CallExpr 0x13c1408 <col:16, col:27> 'typename std::remove_reference<unique_ptr<int> &>::type':'std::unique_ptr<int>' xvalue
+|   |         |-ImplicitCastExpr 0x13c13f0 <col:16, col:21> 'typename std::remove_reference<unique_ptr<int> &>::type &&(*)(std::unique_ptr<int> &) noexcept' <FunctionToPointerDecay>
+|   |         | `-DeclRefExpr 0x13c13b8 <col:16, col:21> 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' lvalue Function 0x13bdc78 'move' 'typename std::remove_reference<unique_ptr<int> &>::type &&(std::unique_ptr<int> &) noexcept' (FunctionTemplate 0x800088 'move')
+|   |         `-DeclRefExpr 0x13c12f8 <col:26> 'typename _MakeUniq<int>::__single_object':'std::unique_ptr<int>' lvalue Var 0x13bf368 'a' 'typename _MakeUniq<int>::__single_object':'std::unique_ptr<int>'
+*/
   auto HandleImplicitCleanupsCallExpr = makeRule(
       callExpr(
-        anyOf(
-          hasAncestor(cxxConstructExpr()),
-          hasAncestor(exprWithCleanups())
-        ),
+        // unless(returnsVoid()), // NOTE: 戻り値が void な関数呼び出しを除外
+        hasAncestor(exprWithCleanups()),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -609,6 +621,12 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       },
       cat("HandleUnuseReturnValueCallExpr")
     );
+  
+  auto HandleCXXOperatorCallExpr = makeRule(
+    cxxOperatorCallExpr(),
+    {},
+    cat("HandleCXXOperatorCallExpr")
+  );
 
 /*
 |       `-CXXMemberCallExpr 0xfcd050 <col:13, col:26> 'int'
@@ -858,6 +876,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     // Match with CallExpr
     HandleCXXConstructExprFunctionCallCallExprArgument,
     HandleFunctionCallCallExprArgument,
+    HandleCXXOperatorCallExpr,
     HandleExplicitMoveCallExpr,
     HandleImplicitCleanupsCallExpr,
     HandleCalleeFunctionDeclRefExpr,
