@@ -344,6 +344,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         isExpansionInMainFile(), // "Invalid argument Range is in system header" 防止
         unless(isExpansionInSystemHeader()),
         unless(hasParent(cxxForRangeStmt())),
+        unless(hasParent(declStmt(hasParent(ifStmt())))),
         hasDescendant(expr()), // 代入を伴うこと
         hasParent(declStmt( // 文法破壊防止
           unless(hasParent(forStmt())),
@@ -495,6 +496,19 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |     |         `-DeclRefExpr 0x1507d18 <col:17> 'int *':'int *' lvalue Var 0x15078c8 '__begin1' 'int *':'int *'
 |     `-CompoundStmt 0x1508f20 <col:26, line:19:5>
 */
+/* 除外するケース
+|   `-IfStmt 0x2eac4b0 <line:155:5, col:40> has_var
+|     |-DeclStmt 0x2eac4d8 <col:9, col:36>
+|     | `-VarDecl 0x2eac190 <col:9, col:36> col:21 used res 'const Object *' cinit
+|     |   `-ImplicitCastExpr 0x2eac438 <col:27, col:36> 'const Object *' <NoOp>
+|     |     `-CallExpr 0x2eac2a0 <col:27, col:36> 'Object *'
+|     |       `-ImplicitCastExpr 0x2eac288 <col:27> 'Object *(*)()' <FunctionToPointerDecay>
+|     |         `-DeclRefExpr 0x2eac240 <col:27> 'Object *()' lvalue Function 0x2d683e8 'test_new' 'Object *()'
+|     |-ImplicitCastExpr 0x2eac488 <col:21> 'bool' <PointerToBoolean>
+|     | `-ImplicitCastExpr 0x2eac470 <col:21> 'const Object *' <LValueToRValue>
+|     |   `-DeclRefExpr 0x2eac450 <col:21> 'const Object *' lvalue Var 0x2eac190 'res' 'const Object *' // => 除外
+|     `-CompoundStmt 0x2eac4a0 <col:39, col:40>
+*/
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
@@ -509,6 +523,9 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_initlistexpr,
         is_not_increment,
         unless(is_referenced_value),
+        unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay), hasParent(callExpr())))),
+        unless(hasParent(implicitCastExpr(hasParent(implicitCastExpr(hasParent(ifStmt())))))),
+        unless(ignoringParenImpCasts(hasParent(ifStmt()))),
         child_does_not_have_record,
         allOf(unless(hasAncestor(cxxForRangeStmt())), hasAncestor(compoundStmt())),
         anyOf(

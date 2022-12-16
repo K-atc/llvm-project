@@ -64,12 +64,40 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
   //     condition_found("HandleBinaryOperatorIfStmtCondition")
   //   );
 
+/* 除外するケース：`if (const auto *res = test_new()) {}`
+|   `-IfStmt 0x15b82d0 <line:155:5, col:40> has_var
+|     |-DeclStmt 0x15b82f8 <col:9, col:36>
+|     | `-VarDecl 0x15b7fb0 <col:9, col:36> col:21 used res 'const Object *' cinit
+|     |   `-ImplicitCastExpr 0x15b8258 <col:27, col:36> 'const Object *' <NoOp>
+|     |     `-CallExpr 0x15b80c0 <col:27, col:36> 'Object *'
+|     |       `-ImplicitCastExpr 0x15b80a8 <col:27> 'Object *(*)()' <FunctionToPointerDecay>
+|     |         `-DeclRefExpr 0x15b8060 <col:27> 'Object *()' lvalue Function 0x1474208 'test_new' 'Object *()'
+|     |-ImplicitCastExpr 0x15b82a8 <col:21> 'bool' <PointerToBoolean>
+|     | `-ImplicitCastExpr 0x15b8290 <col:21> 'const Object *' <LValueToRValue>
+|     |   `-DeclRefExpr 0x15b8270 <col:21> 'const Object *' lvalue Var 0x15b7fb0 'res' 'const Object *'
+|     `-CompoundStmt 0x15b82c0 <col:39, col:40>
+*/
   auto HandleIfStmtCondition = makeRule(
       ifStmt(
-        hasCondition(expr(unless(isInMacro())).bind("expr"))
+        hasCondition(expr(
+          // unless(varDecl())
+        ).bind("expr"))
       ),
       trace_condition_change_set,
       condition_found("HandleIfStmtCondition")
+    );
+
+  auto HandleDeclStmtIfStmtCondition = makeRule(
+      ifStmt(
+        hasConditionVariableStatement(declStmt(hasSingleDecl(decl())).bind("declStmt")),
+        hasCondition(expr().bind("expr"))
+      ),
+      {
+        insertBefore(node("declStmt"), cat("__trace_condition(({ ")),
+        insertAfter(node("declStmt"), cat("; ", node("expr"), "; }))")),
+        add_include,
+      },
+      condition_found("HandleDeclStmtIfStmtCondition")
     );
 
   auto HandleWhileStmtCondition = makeRule(
@@ -89,6 +117,7 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
     );
 
   return applyFirst({
+    HandleDeclStmtIfStmtCondition,
     HandleIfStmtCondition,
     // HandleBinaryOperatorIfStmtCondition,
     HandleWhileStmtCondition,

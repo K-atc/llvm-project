@@ -478,6 +478,16 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x23cac40 <col:5> 'void (*)()' <LValueToRValue>
 |   |   `-DeclRefExpr 0x23cac20 <col:5> 'void (*)()' lvalue Var 0x23cab68 'var_void_f' 'void (*)()'
 */
+/* 除外するパターン
+|       |   `-IfStmt 0x43eed98 <line:802:13, line:810:13>
+|       |     |-UnaryOperator 0x43ea1e0 <line:802:17, col:18> 'bool' prefix '!' cannot overflow
+|       |     | `-ImplicitCastExpr 0x43ea1c8 <col:18> 'bool' <UserDefinedConversion>
+|       |     |   `-CXXMemberCallExpr 0x43ea1a8 <col:18> 'bool'
+|       |     |     `-MemberExpr 0x43ea178 <col:18> '<bound member function type>' .operator bool 0x346fe20
+|       |     |       `-ImplicitCastExpr 0x43ea160 <col:18> 'const std::unique_ptr<AnnotColor>' lvalue <NoOp>
+|       |     |         `-MemberExpr 0x43ea130 <col:18> 'std::unique_ptr<AnnotColor>':'std::unique_ptr<AnnotColor>' lvalue ->fontColor 0x34706c0
+|       |     |           `-CXXThisExpr 0x43ea120 <col:18> 'DefaultAppearance *' implicit this
+*/
   auto ignores_for_callExpr = allOf(
     unless(isInMacro()),
     unless(isExpansionInSystemHeader()),
@@ -491,6 +501,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleCallExpr = makeRule(
       callExpr(
         ignores_for_callExpr,
+        // unless(memberExpr(hasDeclaration(cxxMethodDecl(hasName("bool"))))),
+        unless(has(memberExpr(hasDeclaration(decl())))),
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
@@ -564,7 +576,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 */
   auto HandleImplicitCleanupsCallExpr = makeRule(
       callExpr(
-        // unless(returnsVoid()), // NOTE: 戻り値が void な関数呼び出しを除外
+        unless(hasParent(exprWithCleanups())), // NOTE: 戻り値が void な関数呼び出しを除外
+        unless(hasAncestor(forStmt())), // NOTE: for (auto ... : ...)
+        unless(hasAncestor(cxxForRangeStmt())), // NOTE: for (auto ... : ...)
         hasAncestor(exprWithCleanups()),
         callee(expr().bind("callee"))
       ).bind("caller"),
@@ -634,6 +648,12 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |         | `-DeclRefExpr 0xfccfc0 <col:13> 'Calculator' lvalue Var 0xfcc0e8 'calc' 'Calculator'
 |         |-IntegerLiteral 0xfcd010 <col:22> 'int' 1
 |         `-IntegerLiteral 0xfcd030 <col:25> 'int' 2
+*/
+/* `CMap::parse(nullptr, collectionA, obj->getStream()))`
+|   |   |   |         `-CallExpr 0x2f8b4c0 <col:22, col:72> 'CMap *'
+|   |   |   |           |-ImplicitCastExpr 0x2f8b4a8 <col:22, col:28> 'CMap *(*)(CMapCache *, const GooString *, Stream *)' <FunctionToPointerDecay>
+|   |   |   |           | `-DeclRefExpr 0x2f8b450 <col:22, col:28> 'CMap *(CMapCache *, const GooString *, Stream *)' lvalue CXXMethod 0x2c65e68 'parse' 'CMap *(CMapCache *, const GooString *, Stream *)'
+|   |   |   |           |-ImplicitCastExpr 0x2f8b4f8 <col:34> 'CMapCache *' <NullToPointer>
 */
   auto is_function_pointer = implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay));
   auto ignores_for_CallExprArgument = allOf(
@@ -727,11 +747,36 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 | |             `-MemberExpr 0x15a9098 <col:26, col:32> 'std::vector<std::unique_ptr<int>>':'std::vector<std::unique_ptr<int>>' lvalue ->array 0x15a6260
 | |               `-CXXThisExpr 0x15a9088 <col:26> 'Array *' this
 */
+/* `popup = std::make_unique<AnnotPopup>(docA, std::move(popupObj), &obj2);`
+|   | `-CompoundStmt 0x1499c3f00690 <col:44, line:2035:5>
+|   |   `-ExprWithCleanups 0x1499c3f00678 <line:2034:9, col:78> 'std::unique_ptr<AnnotPopup>' lvalue
+|   |     `-CXXOperatorCallExpr 0x1499c3f00640 <col:9, col:78> 'std::unique_ptr<AnnotPopup>' lvalue '='
+|   |       |-ImplicitCastExpr 0x1499c3f00628 <col:15> 'std::unique_ptr<AnnotPopup> &(*)(std::unique_ptr<AnnotPopup> &&) noexcept' <FunctionToPointerDecay>
+|   |       | `-DeclRefExpr 0x1499c3f005b0 <col:15> 'std::unique_ptr<AnnotPopup> &(std::unique_ptr<AnnotPopup> &&) noexcept' lvalue CXXMethod 0x423a680 'operator=' 'std::unique_ptr<AnnotPopup> &(std::unique_ptr<AnnotPopup> &&) noexcept'
+|   |       |-MemberExpr 0x1499c3efc510 <col:9> 'std::unique_ptr<AnnotPopup>':'std::unique_ptr<AnnotPopup>' lvalue ->popup 0x4242880
+|   |       | `-CXXThisExpr 0x1499c3efc500 <col:9> 'AnnotMarkup *' implicit this
+|   |       `-MaterializeTemporaryExpr 0x1499c3f00598 <col:17, col:78> 'typename _MakeUniq<AnnotPopup>::__single_object':'std::unique_ptr<AnnotPopup>' xvalue
+|   |         `-CXXBindTemporaryExpr 0x1499c3efd6d8 <col:17, col:78> 'typename _MakeUniq<AnnotPopup>::__single_object':'std::unique_ptr<AnnotPopup>' (CXXTemporary 0x1499c3efd6d8)
+|   |           `-CallExpr 0x1499c3efd680 <col:17, col:78> 'typename _MakeUniq<AnnotPopup>::__single_object':'std::unique_ptr<AnnotPopup>'
+|   |             |-ImplicitCastExpr 0x1499c3efd668 <col:17, col:44> 'typename _MakeUniq<AnnotPopup>::__single_object (*)(PDFDoc *&, Object &&, const Object *&&)' <FunctionToPointerDecay>
+|   |             | `-DeclRefExpr 0x1499c3efd5a8 <col:17, col:44> 'typename _MakeUniq<AnnotPopup>::__single_object (PDFDoc *&, Object &&, const Object *&&)' lvalue Function 0x1499c3efd328 'make_unique' 'typename _MakeUniq<AnnotPopup>::__single_object (PDFDoc *&, Object &&, const Object *&&)' (FunctionTemplate 0x34963c8 'make_unique')
+|   |             |-DeclRefExpr 0x1499c3efc618 <col:46> 'PDFDoc *' lvalue ParmVar 0x1499c3efb730 'docA' 'PDFDoc *'
+|   |             |-CallExpr 0x1499c3efc750 <col:52, col:70> 'typename std::remove_reference<Object &>::type':'Object' xvalue
+|   |             | |-ImplicitCastExpr 0x1499c3efc738 <col:52, col:57> 'typename std::remove_reference<Object &>::type &&(*)(Object &) noexcept' <FunctionToPointerDecay>
+|   |             | | `-DeclRefExpr 0x1499c3efc700 <col:52, col:57> 'typename std::remove_reference<Object &>::type &&(Object &) noexcept' lvalue Function 0x3342328 'move' 'typename std::remove_reference<Object &>::type &&(Object &) noexcept' (FunctionTemplate 0x27a02b8 'move')
+|   |             | `-DeclRefExpr 0x1499c3efc6a8 <col:62> 'Object' lvalue Var 0x1499c3efbed0 'popupObj' 'Object'
+|   |             `-MaterializeTemporaryExpr 0x1499c3efd6b8 <col:73, col:74> 'const Object *':'const Object *' xvalue
+|   |               `-UnaryOperator 0x1499c3efc798 <col:73, col:74> 'const Object *' prefix '&' cannot overflow
+|   |                 `-DeclRefExpr 0x1499c3efc778 <col:74> 'const Object' lvalue Var 0x1499c3efc188 'obj2' 'const Object &'
+*/
   auto HandleCXXConstructExprFunctionCallCallExprArgument = makeRule(
       callExpr(
         ignores_for_CallExprArgument,
         hasParent(callExpr()),
-        hasAncestor(cxxConstructExpr()),
+        anyOf(
+          hasAncestor(exprWithCleanups()),
+          hasAncestor(cxxConstructExpr())
+        ),
         callee(expr().bind("callee"))
       ).bind("argument"),
       {
@@ -828,19 +873,61 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     );
 
 /* `return std::nullptr;`
-|   `-ReturnStmt 0x1fe6218 <line:26:5, col:12>
-|     `-ExprWithCleanups 0x1fe6200 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>'
-|       `-CXXConstructExpr 0x1fe61d0 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept' elidable
-|         `-MaterializeTemporaryExpr 0x1fe61b8 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' xvalue
-|           `-CXXBindTemporaryExpr 0x1fd85a0 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' (CXXTemporary 0x1fd85a0)
-|             `-ImplicitCastExpr 0x1fd8580 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' <ConstructorConversion>
-|               `-CXXConstructExpr 0x1fd8550 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::nullptr_t) noexcept'
-|                 `-CXXNullPtrLiteralExpr 0x1fd6950 <col:12> 'std::nullptr_t'
+| `-CompoundStmt 0x12948b8 <col:44, line:34:1>
+|   `-ReturnStmt 0x12948a8 <line:33:5, col:12>
+|     `-ExprWithCleanups 0x1294890 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>'
+|       `-CXXConstructExpr 0x1294860 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept' elidable
+|         `-MaterializeTemporaryExpr 0x1294848 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' xvalue
+|           `-CXXBindTemporaryExpr 0x1287570 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' (CXXTemporary 0x1287570)
+|             `-ImplicitCastExpr 0x1287550 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' <ConstructorConversion>
+|               `-CXXConstructExpr 0x1287520 <col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::nullptr_t) noexcept'
+|                 `-CXXNullPtrLiteralExpr 0x1285920 <col:12> 'std::nullptr_t'
+*/
+  auto HandleCXXNullPtrReturnStmt = makeRule(
+      returnStmt(
+        hasDescendant(
+          cxxNullPtrLiteralExpr().bind("ReturnValue")
+        )
+      ),
+      {
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return_with_cleanups(")),
+        insertAfter(node("ReturnValue"), cat("))")),
+        add_include,
+      },
+      return_found("HandleCXXNullPtrReturnStmt")
+    );
+
+/* RVO: `return Object(nullObj);`
+|   `-ReturnStmt 0x26fefd0 <line:103:5, col:26>
+|     `-ExprWithCleanups 0x26fefb8 <col:12, col:26> 'Object' contains-errors
+|       `-RecoveryExpr 0x26fef90 <col:12, col:26> 'Object' contains-errors
+|         `-CXXFunctionalCastExpr 0x26febd8 <col:12, col:26> 'Object' functional cast to class Object <ConstructorConversion>
+|           `-CXXBindTemporaryExpr 0x26febb8 <col:12, col:26> 'Object' (CXXTemporary 0x26febb8)
+|             `-CXXConstructExpr 0x26feb80 <col:12, col:26> 'Object' 'void (ObjType)'
+|               `-DeclRefExpr 0x26fea98 <col:19> 'ObjType' EnumConstant 0x26fde70 'objNull' 'ObjType'
+*/
+/* `return elems[i];`
+|   `-ReturnStmt 0x2966eb8 <line:104:5, col:19>
+|     `-CXXOperatorCallExpr 0x2966e80 <col:12, col:19> 'const __gnu_cxx::__alloc_traits<std::allocator<Object>, Object>::value_type':'const Object' lvalue '[]'
+|       |-ImplicitCastExpr 0x2966e68 <col:17, col:19> 'std::vector<Object>::const_reference (*)(std::vector::size_type) const noexcept' <FunctionToPointerDecay>
+|       | `-DeclRefExpr 0x2966e48 <col:17, col:19> 'std::vector<Object>::const_reference (std::vector::size_type) const noexcept' lvalue CXXMethod 0x2859c50 'operator[]' 'std::vector<Object>::const_reference (std::vector::size_type) const noexcept'
+|       |-MemberExpr 0x2966dc8 <col:12> 'const std::vector<Object>':'const std::vector<Object>' lvalue ->elems 0x28630a0
+|       | `-CXXThisExpr 0x2966db8 <col:12> 'const Array *' implicit this
+|       `-ImplicitCastExpr 0x2966e30 <col:18> 'std::vector::size_type':'unsigned long' <IntegralCast>
+|         `-ImplicitCastExpr 0x2966e18 <col:18> 'int' <LValueToRValue>
+|           `-DeclRefExpr 0x2966df8 <col:18> 'int' lvalue ParmVar 0x29667a0 'i' 'int'
+*/
+/* 除外するケース： `return new Object(objNull);`
+|   `-ReturnStmt 0x213b758 <line:116:5, col:30>
+|     `-CXXNewExpr 0x213b718 <col:12, col:30> 'Object *' Function 0x179dc60 'operator new' 'void *(std::size_t)'
+|       `-CXXConstructExpr 0x213b6e8 <col:16, col:30> 'Object' 'void (ObjType)'
+|         `-DeclRefExpr 0x213b2e8 <col:23> 'ObjType' EnumConstant 0x213a420 'objNull' 'ObjType'
 */
   auto HandleCXXConstructExprReturnStmt = makeRule(
       returnStmt(
+        unless(has(cxxNewExpr())),
         hasDescendant(cxxConstructExpr(
-          has(expr().bind("ReturnValue"))
+          expr().bind("ReturnValue")
         ))
       ),
       {
@@ -849,6 +936,28 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         add_include,
       },
       return_found("HandleCXXConstructExprReturnStmt")
+    );
+
+/* NRVO: `return nullObj;`
+| `-CompoundStmt 0x1f84998 <col:27, line:110:1>
+|   |-DeclStmt 0x1f84938 <line:108:5, col:35>
+|   | `-VarDecl 0x1f84458 <col:5, col:34> col:19 used nullObj 'Object' static callinit destroyed
+|   |   `-CXXConstructExpr 0x1f848b0 <col:19, col:34> 'Object' 'void (ObjType)'
+|   |     `-DeclRefExpr 0x1f844c0 <col:27> 'ObjType' EnumConstant 0x1f83580 'objNull' 'ObjType'
+|   `-ReturnStmt 0x1f84988 <line:109:5, col:12>
+|     `-ImplicitCastExpr 0x1f84970 <col:12> 'const Object' lvalue <NoOp>
+|       `-DeclRefExpr 0x1f84950 <col:12> 'Object' lvalue Var 0x1f84458 'nullObj' 'Object'
+*/
+  auto HandleNRVOReturnStmt = makeRule(
+      returnStmt(has(ignoringParenImpCasts(
+        declRefExpr().bind("ReturnValue")
+      ))),
+      {
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return_with_NRVO(")),
+        insertAfter(node("ReturnValue"), cat(", ", node("ReturnValue"), "))")),
+        add_include,
+      },
+      return_found("HandleNRVOReturnStmt")
     );
 
   return applyFirst({
@@ -870,7 +979,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl0,
 
     HandleBitFieldReturnStmt,
+    HandleCXXNullPtrReturnStmt,
     HandleCXXConstructExprReturnStmt,
+    HandleNRVOReturnStmt,
     HandleReturnStmt,
 
     // Match with CallExpr
