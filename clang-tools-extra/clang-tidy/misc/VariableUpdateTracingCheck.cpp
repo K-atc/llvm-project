@@ -526,6 +526,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay), hasParent(callExpr())))),
         unless(hasParent(implicitCastExpr(hasParent(implicitCastExpr(hasParent(ifStmt())))))),
         unless(ignoringParenImpCasts(hasParent(ifStmt()))),
+        unless(hasParent(implicitCastExpr(hasParent(lambdaExpr())))), // NOTE: ラムダ式 [](...){} のかっこ内は計装対象外
         child_does_not_have_record,
         allOf(unless(hasAncestor(cxxForRangeStmt())), hasAncestor(compoundStmt())),
         anyOf(

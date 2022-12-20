@@ -669,6 +669,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         ignores_for_CallExprArgument,
         hasParent(callExpr(
           unless(callee(functionDecl(isBuiltinFunction()))),
+          unless(hasDescendant(lambdaExpr())),
           unless(isInMacro())
         ))
       ).bind("argument"),

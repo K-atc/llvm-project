@@ -91,10 +91,13 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
       ifStmt(
         hasConditionVariableStatement(declStmt(hasSingleDecl(decl())).bind("declStmt")),
         hasCondition(expr().bind("expr"))
-      ),
+      ).bind("if"),
       {
-        insertBefore(node("declStmt"), cat("__trace_condition(({ ")),
-        insertAfter(node("declStmt"), cat("; ", node("expr"), "; }))")),
+        /* if ( */
+        insertBefore(node("declStmt"), cat("1) { ")),
+        insertAfter(node("declStmt"), cat("; if (__trace_condition(", node("expr"), ")")),
+        insertAfter(node("if"), cat(" }")),
+        /* ) { ... */
         add_include,
       },
       condition_found("HandleDeclStmtIfStmtCondition")
