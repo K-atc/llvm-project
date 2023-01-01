@@ -898,15 +898,20 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       return_found("HandleCXXNullPtrReturnStmt")
     );
 
-/* RVO: `return Object(nullObj);`
-|   `-ReturnStmt 0x26fefd0 <line:103:5, col:26>
-|     `-ExprWithCleanups 0x26fefb8 <col:12, col:26> 'Object' contains-errors
-|       `-RecoveryExpr 0x26fef90 <col:12, col:26> 'Object' contains-errors
-|         `-CXXFunctionalCastExpr 0x26febd8 <col:12, col:26> 'Object' functional cast to class Object <ConstructorConversion>
-|           `-CXXBindTemporaryExpr 0x26febb8 <col:12, col:26> 'Object' (CXXTemporary 0x26febb8)
-|             `-CXXConstructExpr 0x26feb80 <col:12, col:26> 'Object' 'void (ObjType)'
-|               `-DeclRefExpr 0x26fea98 <col:19> 'ObjType' EnumConstant 0x26fde70 'objNull' 'ObjType'
+/* Return initializer list: `return {};`
+|   `-ReturnStmt 0x1567668 <line:57:5, col:13>
+|     `-CXXConstructExpr 0x1567640 <col:12, col:13> 'std::string':'std::basic_string<char>' 'void () noexcept(is_nothrow_default_constructible<allocator<char>>::value)' list
 */
+  auto HandleNullCXXConstructExprReturnStmt = makeRule(
+      returnStmt(hasReturnValue(
+        cxxConstructExpr(
+          // unlesshasAnyArgument(expr()))
+        )
+      )),
+      {},
+      return_found("HandleNullCXXConstructExprReturnStmt")
+    );
+
 /* `return elems[i];`
 |   `-ReturnStmt 0x2966eb8 <line:104:5, col:19>
 |     `-CXXOperatorCallExpr 0x2966e80 <col:12, col:19> 'const __gnu_cxx::__alloc_traits<std::allocator<Object>, Object>::value_type':'const Object' lvalue '[]'
@@ -918,17 +923,43 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |         `-ImplicitCastExpr 0x2966e18 <col:18> 'int' <LValueToRValue>
 |           `-DeclRefExpr 0x2966df8 <col:18> 'int' lvalue ParmVar 0x29667a0 'i' 'int'
 */
-/* 除外するケース： `return new Object(objNull);`
-|   `-ReturnStmt 0x213b758 <line:116:5, col:30>
-|     `-CXXNewExpr 0x213b718 <col:12, col:30> 'Object *' Function 0x179dc60 'operator new' 'void *(std::size_t)'
-|       `-CXXConstructExpr 0x213b6e8 <col:16, col:30> 'Object' 'void (ObjType)'
-|         `-DeclRefExpr 0x213b2e8 <col:23> 'ObjType' EnumConstant 0x213a420 'objNull' 'ObjType'
+  auto HandleCXXOperatorCallExprReturnStmt = makeRule(
+      returnStmt(hasReturnValue(
+        cxxOperatorCallExpr().bind("ReturnValue")
+      )),
+      {
+        insertBefore(node("ReturnValue"), cat("(__trace_function_return_with_cleanups(")),
+        insertAfter(node("ReturnValue"), cat("))")),
+        add_include,
+      },
+      return_found("HandleCXXOperatorCallExprReturnStmt")
+    );
+
+/* RVO: `return Object(nullObj);`
+|   `-ReturnStmt 0x26fefd0 <line:103:5, col:26>
+|     `-ExprWithCleanups 0x26fefb8 <col:12, col:26> 'Object' contains-errors
+|       `-RecoveryExpr 0x26fef90 <col:12, col:26> 'Object' contains-errors
+|         `-CXXFunctionalCastExpr 0x26febd8 <col:12, col:26> 'ObHandleRVOReturnStmtject' functional cast to class Object <ConstructorConversion>
+|           `-CXXBindTemporaryExpr 0x26febb8 <col:12, col:26> 'Object' (CXXTemporary 0x26febb8)
+|             `-CXXConstructExpr 0x26feb80 <col:12, col:26> 'Object' 'void (ObjType)'
+|               `-DeclRefExpr 0x26fea98 <col:19> 'ObjType' EnumConstant 0x26fde70 'objNull' 'ObjType'
 */
-  auto HandleCXXConstructExprReturnStmt = makeRule(
+/* 除外するケース： `return new Object(objNull);`
+|   `-ReturnStmt 0x2f2cde0 <line:125:5, col:30>
+|     `-ImplicitCastExpr 0x2f2cdc8 <col:12, col:30> 'const Object *' <NoOp>
+|       `-CXXNewExpr 0x2f2cd88 <col:12, col:30> 'Object *' Function 0x2587240 'operator new' 'void *(std::size_t)'
+|         `-CXXConstructExpr 0x2f2cd58 <col:16, col:30> 'Object' 'void (ObjType)'
+|           `-DeclRefExpr 0x2f2cc98 <col:23> 'ObjType' EnumConstant 0x2f2b5a0 'objNull' 'ObjType'
+*/
+/* 除外するケース： `return {};`
+|   `-ReturnStmt 0x1567668 <line:57:5, col:13>
+|     `-CXXConstructExpr 0x1567640 <col:12, col:13> 'std::string':'std::basic_string<char>' 'void () noexcept(is_nothrow_default_constructible<allocator<char>>::value)' list
+*/
+  auto HandleRVOReturnStmt = makeRule(
       returnStmt(
-        unless(has(cxxNewExpr())),
         hasDescendant(cxxConstructExpr(
-          expr().bind("ReturnValue")
+          unless(hasParent(cxxNewExpr())),
+          has(expr().bind("ReturnValue"))
         ))
       ),
       {
@@ -936,7 +967,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("ReturnValue"), cat("))")),
         add_include,
       },
-      return_found("HandleCXXConstructExprReturnStmt")
+      return_found("HandleRVOReturnStmt")
     );
 
 /* NRVO: `return nullObj;`
@@ -981,7 +1012,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
     HandleBitFieldReturnStmt,
     HandleCXXNullPtrReturnStmt,
-    HandleCXXConstructExprReturnStmt,
+    HandleNullCXXConstructExprReturnStmt,
+    HandleCXXOperatorCallExprReturnStmt,
+    HandleRVOReturnStmt,
     HandleNRVOReturnStmt,
     HandleReturnStmt,
 
