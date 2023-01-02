@@ -496,7 +496,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     unless(callee(functionDecl(isBuiltinFunction()))),
     unless(cxxOperatorCallExpr()),
     unless(hasAncestor(forStmt())), // ゆるすぎるかも…
-    unless(hasAncestor(cxxForRangeStmt()))
+    unless(hasAncestor(cxxForRangeStmt())),
+    unless(hasAncestor(cxxCtorInitializer()))
   );
   auto HandleCallExpr = makeRule(
       callExpr(

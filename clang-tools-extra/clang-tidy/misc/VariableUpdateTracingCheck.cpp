@@ -597,7 +597,15 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_fielddecl,
         is_not_in_enum,
         unless(hasParent(cStyleCastExpr(hasCastKind(CK_NullToPointer)))),
-        unless(hasAncestor(varDecl(hasAlignedAttr())))
+        unless(hasAncestor(varDecl(hasAlignedAttr()))),
+        unless(hasAncestor(parmVarDecl())),
+        anyOf(
+          hasParent(explicitCastExpr()),
+          hasParent(implicitCastExpr()),
+          hasParent(arraySubscriptExpr()),
+          hasAncestor(callExpr()),
+          hasParent(binaryOperator())
+        ) // NOTE: (int (*)[3]) malloc(sizeof(int[3])) の明示キャストとマッチさせない
       ).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueIntegerLiteral")
