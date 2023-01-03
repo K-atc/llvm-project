@@ -231,8 +231,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(is_referenced_value),
         is_not_in_initlistexpr,
         child_does_not_have_record,
-        hasBase(capture_record_type)
-        // hasType(type().bind("rvalue_type"))
+        hasBase(capture_record_type),
+        hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       {
         changeTo(
@@ -241,7 +241,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("rvalue")),
-          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -254,8 +254,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(is_referenced_value),
         is_not_in_initlistexpr,
         child_does_not_have_record,
-        hasBase(ignoringParenImpCasts(memberExpr(member(has(typeLoc().bind("record_type")))).bind("record")))
-        // hasTypeLoc(typeLoc().bind("rvalue_type"))
+        hasBase(ignoringParenImpCasts(memberExpr(member(has(typeLoc().bind("record_type")))).bind("record"))),
+        hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       {
         changeTo(
@@ -264,7 +264,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("rvalue")),
-          cat(", ", node("rvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -289,7 +289,8 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_initlistexpr,
         is_not_increment,
         child_does_not_have_record,
-        hasBase(capture_record_type)
+        hasBase(capture_record_type),
+        hasType(qualType().bind("lvalue_type"))
       ).bind("lvalue"),
       {
         changeTo(
@@ -298,7 +299,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("lvalue")),
-          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", describe("lvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },
@@ -314,6 +315,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_in_initlistexpr,
         is_not_increment,
         child_does_not_have_record,
+        hasType(qualType().bind("lvalue_type")),
         hasBase(ignoringParenImpCasts(memberExpr(member(has(typeLoc().bind("record_type")))).bind("record")))
       ).bind("lvalue"),
       {
@@ -323,7 +325,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         changeTo(
           after(node("lvalue")),
-          cat(", ", node("lvalue"), ", (", "FIXME", "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", describe("lvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
         ),
         add_include,
       },

@@ -14,7 +14,7 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Transformer/RangeSelector.h" // node("hoge"), name("hoge")
 #include "clang/Tooling/Transformer/RewriteRule.h" // changeTo(), addInclude()
-#include "clang/Tooling/Transformer/Stencil.h"
+#include "clang/Tooling/Transformer/Stencil.h" // describe("hoge")
 #include "llvm/ADT/StringRef.h"
 
 #include <iostream>
@@ -507,8 +507,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
-        insertBefore(node("caller"), cat("__trace_function_call(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        // NOTE: テンプレートの,がマクロの引数区切りと扱われないように、()で囲む
+        insertBefore(node("caller"), cat("__trace_function_call((")),
+        insertAfter(node("caller"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleCallExpr")
@@ -524,8 +525,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         functionDecl(hasName("move")).bind("callee")
       )).bind("caller"),
       {
-        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        // NOTE: テンプレートの,がマクロの引数区切りと扱われないように、()で囲む
+        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups((")),
+        insertAfter(node("caller"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleExplicitMoveCallExpr")
@@ -584,8 +586,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
-        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        insertBefore(node("caller"), cat("__trace_function_call_with_cleanups((")),
+        insertAfter(node("caller"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleImplicitCleanupsCallExpr")
@@ -601,8 +603,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         callee(expr().bind("callee"))
       ).bind("caller"),
       {
-        insertBefore(node("caller"), cat("__trace_void_function_call(")),
-        insertAfter(node("caller"), cat(", ", node("callee"), ")")),
+        insertBefore(node("caller"), cat("__trace_void_function_call((")),
+        insertAfter(node("caller"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleVoidCallExpr")
@@ -675,12 +677,29 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         ))
       ).bind("argument"),
       {
-        insertBefore(node("argument"), cat("__trace_function_call_param(")),
-        insertAfter(node("argument"), cat(")")),
+        insertBefore(node("argument"), cat("__trace_function_call_param((")),
+        insertAfter(node("argument"), cat("))")),
         add_include,
       },
       cat("HandleCallExprArgument")
     );
+  // auto NotWorkingHandleCallExprArgument = makeRule(
+  //     callExpr(
+  //       ignores_for_CallExprArgument,
+  //       unless(hasDescendant(lambdaExpr())),
+  //       forEachArgumentWithParam(
+  //         expr().bind("argument"),
+  //         parmVarDecl()
+  //       )
+  //     ),
+  //     {
+  //       insertBefore(node("argument"), cat("__trace_function_call_param((")),
+  //       insertAfter(node("argument"), cat("))")),
+  //       add_include,
+  //     },
+  //     cat("HandleCallExprArgument")
+  //   );
+
 
 /* 📝 g(NULL, 3) の AST
 |   |     `-CallExpr 0x15ee820 <col:20, col:29> 'int'
@@ -731,8 +750,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         callee(expr().bind("callee"))
       ).bind("argument"),
       {
-        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call(")),
-        insertAfter(node("argument"), cat(",", node("callee"), "))")),
+        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call((")),
+        insertAfter(node("argument"), cat("), (", node("callee"), ")))")),
         add_include,
       },
       cat("HandleFunctionCallCallExprArgument")
@@ -782,8 +801,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         callee(expr().bind("callee"))
       ).bind("argument"),
       {
-        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call_with_cleanups2(")),
-        insertAfter(node("argument"), cat(",", node("callee"), "))")),
+        insertBefore(node("argument"), cat("__trace_function_call_param(__trace_function_call_with_cleanups2((")),
+        insertAfter(node("argument"), cat("), (", node("callee"), ")))")),
         add_include,
       },
       cat("HandleCXXConstructExprFunctionCallCallExprArgument")
@@ -815,26 +834,38 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         ))
       ).bind("callee"),
       {
-        insertBefore(node("callee"), cat("__trace_function_call_param(")),
-        insertAfter(node("callee"), cat(")")),
+        insertBefore(node("callee"), cat("__trace_function_call_param((")),
+        insertAfter(node("callee"), cat("))")),
         add_include,
       },
       cat("HandleCalleeFunctionDeclRefExpr")
     );
-  // auto HandleCalleeFunctionDeclRefExpr2 = makeRule(
-  //     // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
-  //     stmt(implicitCastExpr(
-  //       hasParent(callExpr()),
-  //       hasCastKind(CK_FunctionToPointerDecay),
-  //       declRefExpr()
-  //     )).bind("callee"),
-  //     {
-  //       insertBefore(node("callee"), cat("__trace_function_call_param(")),
-  //       insertAfter(node("callee"), cat(")")),
-  //       add_include,
-  //     },
-  //     cat("HandleCalleeFunctionDeclRefExpr2")
-  //   );
+
+/* add({0, 1});
+|   `-ExprWithCleanups 0x305ba48 <line:260:5, col:15> 'int'
+|     `-CallExpr 0x3051180 <col:5, col:15> 'int'
+|       |-ImplicitCastExpr 0x3051168 <col:5> 'int (*)(std::pair<int, int>)' <FunctionToPointerDecay>
+|       | `-DeclRefExpr 0x30510e8 <col:5> 'int (std::pair<int, int>)' lvalue Function 0x3030040 'add' 'int (std::pair<int, int>)'
+|       `-CXXConstructExpr 0x305ba10 <col:9, col:14> 'std::pair<int, int>':'std::pair<int, int>' 'void (int &&, int &&)' list
+|         |-MaterializeTemporaryExpr 0x305ad68 <col:10> 'int':'int' xvalue
+|         | `-IntegerLiteral 0x3046410 <col:10> 'int' 0
+|         `-MaterializeTemporaryExpr 0x305ad80 <col:13> 'int':'int' xvalue
+|           `-IntegerLiteral 0x3046430 <col:13> 'int' 1
+*/
+  auto HandleInitializerListsCallExprArgument = makeRule(
+      cxxConstructExpr(
+        hasType(qualType().bind("callee_type")),
+        hasParent(callExpr()),
+        isListInitialization()
+      ).bind("callee"),
+      {
+        insertBefore(node("callee"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
+        insertAfter(node("callee"), cat(")")),
+        add_include,
+      },
+      cat("HandleInitializerListsCallExprArgument")
+    );
+
 
   auto HandleReturnStmt = makeRule(
       returnStmt(
@@ -1011,6 +1042,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
     HandleFunctionDecl0,
 
+    // Match with ReturnStmt
     HandleBitFieldReturnStmt,
     HandleCXXNullPtrReturnStmt,
     HandleNullCXXConstructExprReturnStmt,
@@ -1029,6 +1061,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleCallExpr,
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
+
+    HandleInitializerListsCallExprArgument,
 
     // Match with stmt
     HandleCallNullArgument,
