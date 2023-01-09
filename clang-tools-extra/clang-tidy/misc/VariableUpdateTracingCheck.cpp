@@ -427,29 +427,52 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |     |         `-DeclRefExpr 0x18c6c78 <col:5> 'struct header *' lvalue Var 0x18c0498 'h' 'struct header *'
 |     `-IntegerLiteral 0x18c6d58 <col:32> 'int' 3
 */
+/* C++ のクラスメンバー
+| |   |-BinaryOperator 0x2ab7da8 <line:35:9, col:15> 'int' lvalue '='
+| |   | |-MemberExpr 0x2ab7d58 <col:9> 'int' lvalue ->ceo 0x2ab7bc8
+| |   | | `-CXXThisExpr 0x2ab7d48 <col:9> 'Company *' implicit this
+| |   | `-IntegerLiteral 0x2ab7d88 <col:15> 'int' 1
+*/
+/* 除外パターン：テンプレート引数のクラス名
+class Rectangle {
+  [...]
+};
+[...]
+    auto rect = std::make_unique<Rectangle>(0, 0, 0, 0);
+                                 ~~~~~~~~~
+    [... rect の参照 ...]
+*/
   auto HandleLvalueMemberExpr = makeRule(
-      memberExpr(
-        unless(isInMacro()),
-        isExpansionInMainFile(),
-        unless(isExpansionInSystemHeader()),
-        is_lvalue,
-        is_not_in_initlistexpr,
-        is_not_increment,
-        unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
-        is_not_pointer_operation,
-        unless(hasAncestor(memberExpr())),
-        member(fieldDecl(hasTypeLoc(typeLoc().bind("lvalue_type")))),
-        capture_record_type
-      ).bind("lvalue"),
+      traverse(TK_IgnoreUnlessSpelledInSource, binaryOperator(
+        hasOperatorName("="),
+        hasLHS(memberExpr( // NOTE: TK_IgnoreUnlessSpelledInSource を使うとRValueへのimplicit castが見えなくなるので hasLHS を使わざるを得ない。
+          unless(isInMacro()),
+          isExpansionInMainFile(),
+          unless(isExpansionInSystemHeader()),
+          is_lvalue,
+          is_not_in_initlistexpr,
+          is_not_increment,
+          unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
+          is_not_pointer_operation,
+          unless(hasAncestor(memberExpr())),
+          member(valueDecl(hasType(qualType().bind("lvalue_type")))),
+          anyOf(
+            capture_record_type,
+            has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
+          )
+        ).bind("lvalue"))
+      )),
       {
-        // NOTE: メンバー参照が連続する場合（v.a->b）はノードを含めて書き換えた方が楽
         insertBefore(
           node("lvalue"),
           cat("__trace_member_lvalue(")
         ),
         insertAfter(
           node("lvalue"),
-          cat(", ", node("lvalue"), ", (", node("lvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("lvalue"), ", (", describe("lvalue_type"), "), ", selectBound({
+            { "record", cat(node("record"), ", (", name("record_type")) }, 
+            { "class", cat(node("class"), ", (", describe("class_type")) }
+          }), "))")
         ),
         add_include,
       },
@@ -574,6 +597,16 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
 |   |   `-CStyleCastExpr 0x1bc1788 <col:10, col:18> 'void *' <NullToPointer>
 |   |     `-IntegerLiteral 0x1bc1750 <col:18> 'int' 0
 */
+/* 除外するケース： `XRef::XRef() : objStrs { 5 }`
+|-CXXConstructorDecl 0x387bd38 parent 0x382ca18 prev 0x382cc00 <line:234:1, line:254:1> line:234:7 used XRef 'void ()'
+[...]
+| |-CXXCtorInitializer Field 0x3861e30 'objStrs' 'PopplerCache<Goffset, ObjectStream>':'PopplerCache<long long, ObjectStream>'
+| | `-CXXConstructExpr 0x387bef8 <col:16, col:28> 'PopplerCache<Goffset, ObjectStream>':'PopplerCache<long long, ObjectStream>' 'void (std::size_t)' list
+| |   `-ImplicitCastExpr 0x387beb8 <col:26> 'std::size_t':'unsigned long' <IntegralCast>
+| |     `-IntegerLiteral 0x387be20 <col:26> 'int' 5
+[...]
+| `-CompoundStmt 0x387cfa8 <line:235:1, line:254:1>
+*/
   // FIXME: マイナス値が -(____trace_variable_rvalue(1, const int)) になってしまう。
   auto change_rvalue_const_int = {
       insertBefore(
@@ -582,13 +615,14 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
       ),
       insertAfter(
         node("rvalue"), 
-        cat(", ", node("rvalue"), ", (", "const int", "))")
+        cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "))")
       ),
       add_include,
     };
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
-      integerLiteral(
+      // NOTE: std::array<std::pair<int, int>, 2> の数字にマッチしないように、トラバースのモードを変更する必要あり
+      traverse(TK_IgnoreUnlessSpelledInSource, integerLiteral(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         is_not_in_case,
@@ -601,14 +635,17 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         unless(hasParent(cStyleCastExpr(hasCastKind(CK_NullToPointer)))),
         unless(hasAncestor(varDecl(hasAlignedAttr()))),
         unless(hasAncestor(parmVarDecl())),
+        hasAncestor(compoundStmt()), // NOTE: unless(hasAncestor(cxxCtorInitializer())) が発火しないので、代替
         anyOf(
           hasParent(explicitCastExpr()),
           hasParent(implicitCastExpr()),
           hasParent(arraySubscriptExpr()),
-          hasAncestor(callExpr()),
+          hasParent(callExpr()),
+          hasParent(returnStmt()),
           hasParent(binaryOperator())
-        ) // NOTE: (int (*)[3]) malloc(sizeof(int[3])) の明示キャストとマッチさせない
-      ).bind("rvalue"),
+        ), // NOTE: (int (*)[3]) malloc(sizeof(int[3])) の明示キャストとマッチさせない
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue")),
       change_rvalue_const_int,
       assignment_found("HandleRvalueIntegerLiteral")
     );
@@ -774,8 +811,11 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         is_not_pointer_operation,
         unless(is_bitfield),
         child_does_not_have_record,
-        member(fieldDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-        capture_record_type
+        member(valueDecl(hasType(qualType().bind("rvalue_type")))),
+        anyOf(
+          capture_record_type,
+          has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
+        )
       ).bind("rvalue"),
       {
         insertBefore(
@@ -784,7 +824,10 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         insertAfter(
           node("rvalue"),
-          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "), ", node("record"), ", (", name("record_type"), "))")
+          cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "), ", selectBound({
+            { "record", cat(node("record"), ", (", name("record_type")) }, 
+            { "class", cat(node("class"), ", (", describe("class_type")) }
+          }), "))")
         ),
         add_include,
       },

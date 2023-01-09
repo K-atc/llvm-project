@@ -820,6 +820,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleCalleeFunctionDeclRefExpr = makeRule(
       // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
       declRefExpr(
+        unless(hasAncestor(cxxCtorInitializer())),
         unless(hasParent(
           implicitCastExpr(
             hasCastKind(CK_FunctionToPointerDecay),
@@ -852,7 +853,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |         `-MaterializeTemporaryExpr 0x305ad80 <col:13> 'int':'int' xvalue
 |           `-IntegerLiteral 0x3046430 <col:13> 'int' 1
 */
-  auto HandleInitializerListsCallExprArgument = makeRule(
+  auto HandleCxxConstructExprInitializerListsCallExprArgument = makeRule(
       cxxConstructExpr(
         hasType(qualType().bind("callee_type")),
         hasParent(callExpr()),
@@ -863,21 +864,40 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         insertAfter(node("callee"), cat(")")),
         add_include,
       },
-      cat("HandleInitializerListsCallExprArgument")
+      cat("HandleCxxConstructExprInitializerListsCallExprArgument")
     );
 
+/* `writeObject(..., { objNum, objGen }, ...);`
+|   `-CallExpr 0x14a29b8987e0 <line:1348:5, col:120> 'void'
+[...]
+|     |-InitListExpr 0x14a29b8988f0 <col:81, col:98> 'Ref'
+|     | |-ImplicitCastExpr 0x14a29b898940 <col:83> 'int' <LValueToRValue>
+|     | | `-DeclRefExpr 0x14a29b8986f8 <col:83> 'int' lvalue ParmVar 0x14a29b897f58 'objNum' 'int'
+|     | `-ImplicitCastExpr 0x14a29b898958 <col:91> 'int' <LValueToRValue>
+|     |   `-DeclRefExpr 0x14a29b898718 <col:91> 'int' lvalue ParmVar 0x14a29b897fd8 'objGen' 'int'
+*/
+  auto HandleInitListExprInitializerListsCallExprArgument = makeRule(
+      initListExpr(
+        hasType(qualType().bind("callee_type")),
+        hasParent(callExpr())
+      ).bind("callee"),
+      {
+        insertBefore(node("callee"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
+        insertAfter(node("callee"), cat(")")),
+        add_include,
+      },
+      cat("HandleInitListExprInitializerListsCallExprArgument")
+    );
 
   auto HandleReturnStmt = makeRule(
-      returnStmt(
-        unless(hasAncestor(cxxRecordDecl())),
-        // hasAncestor(functionDecl(hasReturnTypeLoc(typeLoc().bind("ReturnValueType")))),
+      traverse(TK_IgnoreUnlessSpelledInSource, returnStmt(
+        // unless(hasAncestor(cxxRecordDecl())),
         hasReturnValue(expr().bind("ReturnValue"))
-      ),
+      )),
       {
         // NOTE: return(ret_val); と書いている例もあるので、安全のためにカッコで囲んでおく
         insertBefore(node("ReturnValue"), cat("(__trace_function_return(")),
         insertAfter(node("ReturnValue"), cat("))")),
-        // insertAfter(node("ReturnValue"), cat(", ", name("ReturnValueType"), "))")),
         add_include,
       },
       return_found("HandleReturnStmt")
@@ -1046,9 +1066,9 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleBitFieldReturnStmt,
     HandleCXXNullPtrReturnStmt,
     HandleNullCXXConstructExprReturnStmt,
-    HandleCXXOperatorCallExprReturnStmt,
-    HandleRVOReturnStmt,
-    HandleNRVOReturnStmt,
+    // HandleCXXOperatorCallExprReturnStmt,
+    // HandleRVOReturnStmt,
+    // HandleNRVOReturnStmt,
     HandleReturnStmt,
 
     // Match with CallExpr
@@ -1062,7 +1082,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
 
-    HandleInitializerListsCallExprArgument,
+    HandleCxxConstructExprInitializerListsCallExprArgument,
+    HandleInitListExprInitializerListsCallExprArgument,
 
     // Match with stmt
     HandleCallNullArgument,
