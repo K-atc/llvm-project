@@ -193,6 +193,20 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto add_include = addInclude("trace.h", IncludeFormat::Angled);
   // auto add_include = addInclude("trace.h"); // Avoids "config.h:7:4: error: #error config.h must be #included before system headers"
 
+  auto change_variable = [add_include](auto macro_name, auto variable_id, auto type_id) {
+    return editList({
+        insertBefore(
+          node(variable_id), 
+          cat(macro_name, "(")
+        ),
+        insertAfter(
+          node(variable_id), 
+          cat(", ", node(variable_id), ", (", describe(type_id), "))")
+        ),
+        add_include,
+    });
+  };
+
 /* (a) 
 |   |-DeclStmt 0x1b86a20 <line:105:5, col:19>
 |   | `-VarDecl 0x1b869b8 <col:5, col:18> col:18 used i 'int' register
@@ -563,17 +577,7 @@ class Rectangle {
           to(functionDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
         )
       ).bind("rvalue"),
-      {
-        insertBefore(
-          node("rvalue"), 
-          cat("__trace_variable_rvalue(")
-        ),
-        insertAfter(
-          node("rvalue"), 
-          cat(", ", node("rvalue"), ", (", name("rvalue_type"), "))")
-        ),
-        add_include,
-      },
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
       assignment_found("HandleRvalueDeclRefExpr")
     );
 
@@ -608,17 +612,8 @@ class Rectangle {
 | `-CompoundStmt 0x387cfa8 <line:235:1, line:254:1>
 */
   // FIXME: マイナス値が -(____trace_variable_rvalue(1, const int)) になってしまう。
-  auto change_rvalue_const_int = {
-      insertBefore(
-        node("rvalue"), 
-        cat("__trace_variable_rvalue(")
-      ),
-      insertAfter(
-        node("rvalue"), 
-        cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "))")
-      ),
-      add_include,
-    };
+  auto change_rvalue_const_int = change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type");
+
   auto HandleRvalueIntegerLiteral = makeRule(
       // TODO: v += u を v = v + u に正規化
       // NOTE: std::array<std::pair<int, int>, 2> の数字にマッチしないように、トラバースのモードを変更する必要あり
@@ -680,17 +675,7 @@ class Rectangle {
           hasType(type().bind("rvalue_type"))
         )
       ).bind("rvalue"),
-      {
-        insertBefore(
-          node("rvalue"), 
-          cat("__trace_variable_rvalue(")
-        ),
-        insertAfter(
-          node("rvalue"), 
-          cat(", ", node("rvalue"), ", (", node("rvalue_type"), "))")
-        ),
-        add_include,
-      },
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
       assignment_found("HandleRvalueStringLiteral")
     );
 
@@ -730,6 +715,63 @@ class Rectangle {
       },
       assignment_found("HandleRvalueNull")
     );
+
+/*
+| |   `-DeclStmt 0x1e399c8 <line:54:9, col:26>
+| |     `-VarDecl 0x1e39950 <col:9, col:22> col:18 a 'Company *' cinit
+| |       `-CXXThisExpr 0x1e399b8 <col:22> 'Company *' this
+*/
+/* 除外：
+| |   |-BinaryOperator 0x2dd0fe8 <line:44:9, col:15> 'int' lvalue '='
+| |   | |-MemberExpr 0x2dd0f98 <col:9> 'int' lvalue ->ceo 0x2dd0e08
+| |   | | `-CXXThisExpr 0x2dd0f88 <col:9> 'Company *' implicit this
+| |   | `-IntegerLiteral 0x2dd0fc8 <col:15> 'int' 1
+*/
+  auto HandleRvalueCXXThisExpr = makeRule(
+      cxxThisExpr(
+        unless(hasParent(memberExpr())),
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue"),
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
+      assignment_found("HandleRvalueCXXThisExpr")
+  );
+
+/*
+|   |-DeclStmt 0x1e372a8 <line:9:5, col:37>
+|   | `-VarDecl 0x1db6148 <col:5, col:30> col:26 a 'std::unique_ptr<int>':'std::unique_ptr<int>' cinit destroyed
+|   |   `-ExprWithCleanups 0x1e37290 <col:26, col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>'
+|   |     `-CXXConstructExpr 0x1e37260 <col:26, col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::unique_ptr<int> &&) noexcept' elidable
+|   |       `-MaterializeTemporaryExpr 0x1e37248 <col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>' xvalue
+|   |         `-CXXBindTemporaryExpr 0x1e2a000 <col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>' (CXXTemporary 0x1e2a000)
+|   |           `-ImplicitCastExpr 0x1e29fe0 <col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>' <ConstructorConversion>
+|   |             `-CXXConstructExpr 0x1e29fb0 <col:30> 'std::unique_ptr<int>':'std::unique_ptr<int>' 'void (std::nullptr_t) noexcept'
+|   |               `-CXXNullPtrLiteralExpr 0x1db61b0 <col:30> 'std::nullptr_t'
+*/
+  auto HandleRvalueCXXNullPtrLiteralExpr = makeRule(
+      cxxNullPtrLiteralExpr(
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue"),
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
+      assignment_found("HandleRvalueCXXNullPtrLiteralExpr")
+  );
+
+/*
+|   `-DeclStmt 0x1e373c0 <line:10:5, col:26>
+|     `-VarDecl 0x1e372d0 <col:5, col:21> col:10 b 'bool' cinit
+|       `-ImplicitCastExpr 0x1e373a8 <col:14, col:21> 'bool' <IntegralToBoolean>
+|         `-BinaryOperator 0x1e37388 <col:14, col:21> 'int' '|'
+|           |-ImplicitCastExpr 0x1e37358 <col:14> 'int' <IntegralCast>
+|           | `-CXXBoolLiteralExpr 0x1e37338 <col:14> 'bool' true
+|           `-ImplicitCastExpr 0x1e37370 <col:21> 'int' <IntegralCast>
+|             `-CXXBoolLiteralExpr 0x1e37348 <col:21> 'bool' false
+*/
+  auto HandleRvalueCXXBoolLiteralExpr = makeRule(
+      cxxBoolLiteral(
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue"),
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
+      assignment_found("HandleRvalueCXXBoolLiteralExpr")
+  );
 
   // <DeclRefExpr>++
 /*
@@ -800,6 +842,28 @@ class Rectangle {
 |   |       |     `-DeclRefExpr 0x815978 <col:13> 'struct header *' lvalue Var 0x814570 'h' 'struct header *'
 |   |       `-IntegerLiteral 0x8159e0 <col:22> 'int' 0
 */
+/* `calc.add(c.ceo, c.cto);`
+|   |-CXXMemberCallExpr 0x2ee9ce8 <line:59:5, col:26> 'int'
+|   | |-MemberExpr 0x2ee9c18 <col:5, col:10> '<bound member function type>' .add 0x2ee78a0
+|   | | `-DeclRefExpr 0x2ee9bf8 <col:5> 'Calculator' lvalue Var 0x2ee8c90 'calc' 'Calculator'
+|   | |-ImplicitCastExpr 0x2ee9d18 <col:14, col:16> 'int' <LValueToRValue>
+|   | | `-MemberExpr 0x2ee9c68 <col:14, col:16> 'int' lvalue .ceo 0x2ee86c0
+|   | |   `-DeclRefExpr 0x2ee9c48 <col:14> 'Company' lvalue Var 0x2ee96b0 'c' 'Company'
+|   | `-ImplicitCastExpr 0x2ee9d30 <col:21, col:23> 'int' <LValueToRValue>
+|   |   `-MemberExpr 0x2ee9cb8 <col:21, col:23> 'int' lvalue .cto 0x2ee8728
+|   |     `-DeclRefExpr 0x2ee9c98 <col:21> 'Company' lvalue Var 0x2ee96b0 'c' 'Company'
+*/
+/* 除外するケース：`char c = str.c_str()[2];`
+|   `-DeclStmt 0x24c10d8 <line:33:5, col:28>
+|     `-VarDecl 0x24c0f90 <col:5, col:27> col:10 c 'char' cinit
+|       `-ImplicitCastExpr 0x24c10c0 <col:14, col:27> 'char':'char' <LValueToRValue>
+|         `-ArraySubscriptExpr 0x24c10a0 <col:14, col:27> 'const char':'const char' lvalue
+|           |-CXXMemberCallExpr 0x24c1048 <col:14, col:24> 'const char *'
+|           | `-MemberExpr 0x24c1018 <col:14, col:18> '<bound member function type>' .c_str 0x1e1def0
+|           |   `-ImplicitCastExpr 0x24c1068 <col:14> 'const std::basic_string<char>' lvalue <NoOp>
+|           |     `-DeclRefExpr 0x24c0ff8 <col:14> 'std::string':'std::basic_string<char>' lvalue Var 0x24c0d28 'str' 'std::string':'std::basic_string<char>'
+|           `-IntegerLiteral 0x24c1080 <col:26> 'int' 2
+*/
   auto HandleRvalueFirstLevelMemberExpr = makeRule(
       memberExpr(
         unless(isInMacro()),
@@ -811,6 +875,7 @@ class Rectangle {
         is_not_pointer_operation,
         unless(is_bitfield),
         child_does_not_have_record,
+        unless(hasParent(cxxMemberCallExpr())),
         member(valueDecl(hasType(qualType().bind("rvalue_type")))),
         anyOf(
           capture_record_type,
@@ -938,6 +1003,9 @@ class Rectangle {
 
     HandleRvalueNull,
     HandleRvalueSizeofExpr,
+    HandleRvalueCXXThisExpr,
+    HandleRvalueCXXNullPtrLiteralExpr,
+    HandleRvalueCXXBoolLiteralExpr,
     HandleRvalueReferenceExpr,
     HandleRvalueMemberExprArraySubscriptExpr,
     HandleRvalueArraySubscriptExpr,

@@ -478,6 +478,14 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   | `-ImplicitCastExpr 0x23cac40 <col:5> 'void (*)()' <LValueToRValue>
 |   |   `-DeclRefExpr 0x23cac20 <col:5> 'void (*)()' lvalue Var 0x23cab68 'var_void_f' 'void (*)()'
 */
+/*
+|   | `-VarDecl 0x1e38740 <col:5, col:26> col:9 used a 'int' cinit
+|   |   `-CXXMemberCallExpr 0x1e38838 <col:13, col:26> 'int'
+|   |     |-MemberExpr 0x1e387c8 <col:13, col:18> '<bound member function type>' .add 0x1e37760
+|   |     | `-DeclRefExpr 0x1e387a8 <col:13> 'Calculator' lvalue Var 0x1e38148 'calc' 'Calculator'
+|   |     |-IntegerLiteral 0x1e387f8 <col:22> 'int' 1
+|   |     `-IntegerLiteral 0x1e38818 <col:25> 'int' 2
+*/
 /* 除外するパターン
 |       |   `-IfStmt 0x43eed98 <line:802:13, line:810:13>
 |       |     |-UnaryOperator 0x43ea1e0 <line:802:17, col:18> 'bool' prefix '!' cannot overflow
