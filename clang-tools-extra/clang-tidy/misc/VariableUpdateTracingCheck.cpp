@@ -83,11 +83,18 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
   auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
 
+/*
+|   `-ReturnStmt 0x24378d8 <line:194:5, col:12>
+|     `-CXXConstructExpr 0x24378a8 <col:12> 'std::unique_ptr<Rectangle>':'std::unique_ptr<Rectangle>' 'void (std::unique_ptr<Rectangle> &&) noexcept'
+|       `-ImplicitCastExpr 0x2437860 <col:12> 'typename _MakeUniq<Rectangle>::__single_object':'std::unique_ptr<Rectangle>' xvalue <NoOp>
+|         `-DeclRefExpr 0x2436a68 <col:12> 'typename _MakeUniq<Rectangle>::__single_object':'std::unique_ptr<Rectangle>' lvalue Var 0x242d050 'rect' 'typename _MakeUniq<Rectangle>::__single_object':'std::unique_ptr<Rectangle>'
+*/
   auto is_rvalue = hasAncestor(implicitCastExpr(
       unless(hasParent(cStyleCastExpr(hasCastKind(CK_ToVoid)))),
       anyOf(
-        hasCastKind(CK_LValueToRValue),
-        hasCastKind(CK_ArrayToPointerDecay)
+        hasCastKind(CK_ArrayToPointerDecay),
+        // hasCastKind(CK_NoOp), // => error: call to deleted constructor of 'std::unique_ptr<Rectangle>'
+        hasCastKind(CK_LValueToRValue)
       )
     ));
   auto is_lvalue = allOf(
@@ -456,26 +463,33 @@ class Rectangle {
                                  ~~~~~~~~~
     [... rect の参照 ...]
 */
+  auto capture_member_lvalue = hasLHS( // // NOTE: TK_IgnoreUnlessSpelledInSource を使うとRValueへのimplicit castが見えなくなるので hasLHS を使わざるを得ない。
+      memberExpr(
+        unless(isInMacro()),
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        is_not_in_initlistexpr,
+        is_not_increment,
+        unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
+        is_not_pointer_operation,
+        unless(hasAncestor(memberExpr())),
+        anyOf(
+          capture_record_type,
+          has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
+        ),
+        hasType(qualType().bind("lvalue_type"))
+      ).bind("lvalue"));
   auto HandleLvalueMemberExpr = makeRule(
-      traverse(TK_IgnoreUnlessSpelledInSource, binaryOperator(
-        hasOperatorName("="),
-        hasLHS(memberExpr( // NOTE: TK_IgnoreUnlessSpelledInSource を使うとRValueへのimplicit castが見えなくなるので hasLHS を使わざるを得ない。
-          unless(isInMacro()),
-          isExpansionInMainFile(),
-          unless(isExpansionInSystemHeader()),
-          is_lvalue,
-          is_not_in_initlistexpr,
-          is_not_increment,
-          unless(is_bitfield), // TODO: bit field はトレース対象外なのはなんとかしたいな
-          is_not_pointer_operation,
-          unless(hasAncestor(memberExpr())),
-          member(valueDecl(hasType(qualType().bind("lvalue_type")))),
-          anyOf(
-            capture_record_type,
-            has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
-          )
-        ).bind("lvalue"))
-      )),
+      traverse(TK_IgnoreUnlessSpelledInSource, expr(anyOf(
+        binaryOperator(
+          hasOperatorName("="), 
+          capture_member_lvalue
+        ),
+        cxxOperatorCallExpr(
+          hasOperatorName("="), 
+          capture_member_lvalue
+        )
+      ))),
       {
         insertBefore(
           node("lvalue"),
@@ -571,13 +585,19 @@ class Rectangle {
         is_not_in_initlistexpr,
         is_not_increment,
         unless(is_referenced_value),
-        unless(hasParent(implicitCastExpr(unless(hasParent(implicitCastExpr(unless(hasParent(ifStmt())))))))), // 除外(1)
-        unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay)))), // 除外(2)
+        hasParent(implicitCastExpr(unless(hasCastKind(CK_FunctionToPointerDecay)))), // 除外(2)
         unless(hasAncestor(lambdaExpr())), // NOTE: ラムダ式 [](...){} のかっこ内は計装対象外
         child_does_not_have_record,
         unless(hasAncestor(cxxForRangeStmt())),
         hasAncestor(compoundStmt()),
-        unless(to(varDecl(unless(isRegister())))),
+        anyOf(
+          to(varDecl(
+            unless(isRegister()), 
+            hasParent(declStmt(unless(hasParent(ifStmt())))) // 除外(1)
+          )),
+          to(parmVarDecl())
+          // to(functionDecl()) // NOTE: 除外(2)ができないので一旦除外
+        ),
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
