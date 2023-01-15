@@ -535,7 +535,7 @@ class Rectangle {
 |     |         `-DeclRefExpr 0x1507d18 <col:17> 'int *':'int *' lvalue Var 0x15078c8 '__begin1' 'int *':'int *'
 |     `-CompoundStmt 0x1508f20 <col:26, line:19:5>
 */
-/* 除外するケース
+/* 除外(1)：
 |   `-IfStmt 0x2eac4b0 <line:155:5, col:40> has_var
 |     |-DeclStmt 0x2eac4d8 <col:9, col:36>
 |     | `-VarDecl 0x2eac190 <col:9, col:36> col:21 used res 'const Object *' cinit
@@ -548,6 +548,15 @@ class Rectangle {
 |     |   `-DeclRefExpr 0x2eac450 <col:21> 'const Object *' lvalue Var 0x2eac190 'res' 'const Object *' // => 除外
 |     `-CompoundStmt 0x2eac4a0 <col:39, col:40>
 */
+/* 除外(2)：`makeStream(std::move(obj)`
+|   |   |   |   |         `-CXXMemberCallExpr 0x204ea70 <col:40, col:138> 'Stream *'
+|   |   |   |   |           |-MemberExpr 0x204e7c8 <col:40> '<bound member function type>' ->makeStream 0x1c4c0e8
+|   |   |   |   |           | `-CXXThisExpr 0x204e7b8 <col:40> 'Parser *' implicit this
+|   |   |   |   |           |-CallExpr 0x204e910 <col:51, col:64> 'typename std::remove_reference<Object &>::type':'Object' xvalue
+|   |   |   |   |           | |-ImplicitCastExpr 0x204e8f8 <col:51, col:56> 'typename std::remove_reference<Object &>::type &&(*)(Object &) noexcept' <FunctionToPointerDecay>
+|   |   |   |   |           | | `-DeclRefExpr 0x204e8c0 <col:51, col:56> 'typename std::remove_reference<Object &>::type &&(Object &) noexcept' lvalue Function 0x1b40c78 'move' 'typename std::remove_reference<Object &>::type &&(Object &) noexcept' (FunctionTemplate 0xd6c8a8 'move')
+*/
+
   // <???> = <DeclRefExpr>;
   // rvalue をハンドルするのみ
   auto HandleRvalueDeclRefExpr = makeRule(
@@ -562,20 +571,14 @@ class Rectangle {
         is_not_in_initlistexpr,
         is_not_increment,
         unless(is_referenced_value),
-        unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay), hasParent(callExpr())))),
-        unless(hasParent(implicitCastExpr(hasParent(implicitCastExpr(hasParent(ifStmt())))))),
-        unless(ignoringParenImpCasts(hasParent(ifStmt()))),
-        unless(hasParent(implicitCastExpr(hasParent(lambdaExpr())))), // NOTE: ラムダ式 [](...){} のかっこ内は計装対象外
+        unless(hasParent(implicitCastExpr(unless(hasParent(implicitCastExpr(unless(hasParent(ifStmt())))))))), // 除外(1)
+        unless(hasParent(implicitCastExpr(hasCastKind(CK_FunctionToPointerDecay)))), // 除外(2)
+        unless(hasAncestor(lambdaExpr())), // NOTE: ラムダ式 [](...){} のかっこ内は計装対象外
         child_does_not_have_record,
-        allOf(unless(hasAncestor(cxxForRangeStmt())), hasAncestor(compoundStmt())),
-        anyOf(
-          // 一時変数
-          to(varDecl(unless(isRegister()), hasTypeLoc(typeLoc().bind("rvalue_type")))),
-          // 関数引数
-          to(parmVarDecl(hasTypeLoc(typeLoc().bind("rvalue_type")))),
-          // 関数定義
-          to(functionDecl(hasTypeLoc(typeLoc().bind("rvalue_type"))))
-        )
+        unless(hasAncestor(cxxForRangeStmt())),
+        hasAncestor(compoundStmt()),
+        unless(to(varDecl(unless(isRegister())))),
+        hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
       assignment_found("HandleRvalueDeclRefExpr")
@@ -729,7 +732,8 @@ class Rectangle {
 */
   auto HandleRvalueCXXThisExpr = makeRule(
       cxxThisExpr(
-        unless(hasParent(memberExpr())),
+        is_rvalue,
+        unless(hasAncestor(memberExpr())),
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
