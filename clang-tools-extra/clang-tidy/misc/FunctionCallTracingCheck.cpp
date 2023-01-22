@@ -1070,6 +1070,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl1,
     HandleFunctionDecl0,
 
+#if DISABLE
     // Match with ReturnStmt
     HandleBitFieldReturnStmt,
     HandleCXXNullPtrReturnStmt,
@@ -1098,6 +1099,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleCallExprArgument, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
 
     // HandleMacroUse,
+#endif
   });
 }
 
