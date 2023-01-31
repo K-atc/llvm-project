@@ -500,28 +500,27 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     unless(isInMacro()),
     unless(isExpansionInSystemHeader()),
     isExpansionInMainFile(),
-    unless(returnsVoid()),
+    // unless(returnsVoid()),
     unless(callee(functionDecl(isBuiltinFunction()))),
     unless(cxxOperatorCallExpr()),
     unless(hasAncestor(forStmt())), // ゆるすぎるかも…
     unless(hasAncestor(cxxForRangeStmt())),
     unless(hasAncestor(cxxCtorInitializer()))
   );
-  auto HandleCallExpr = makeRule(
-      callExpr(
-        ignores_for_callExpr,
-        // unless(memberExpr(hasDeclaration(cxxMethodDecl(hasName("bool"))))),
-        unless(has(memberExpr(hasDeclaration(decl())))),
-        callee(expr().bind("callee"))
-      ).bind("caller"),
-      {
-        // NOTE: テンプレートの,がマクロの引数区切りと扱われないように、()で囲む
-        insertBefore(node("caller"), cat("__trace_function_call((")),
-        insertAfter(node("caller"), cat("), (", node("callee"), "))")),
-        add_include,
-      },
-      cat("HandleCallExpr")
-    );
+  // auto HandleCallExpr = makeRule(
+  //     callExpr(
+  //       ignores_for_callExpr,
+  //       unless(has(memberExpr(hasDeclaration(decl())))),
+  //       callee(expr().bind("callee"))
+  //     ).bind("caller"),
+  //     {
+  //       // NOTE: テンプレートの,がマクロの引数区切りと扱われないように、()で囲む
+  //       insertBefore(node("caller"), cat("__trace_function_call((")),
+  //       insertAfter(node("caller"), cat("), (", node("callee"), "))")),
+  //       add_include,
+  //     },
+  //     cat("HandleCallExpr")
+  //   );
 /*
 | |     `-CallExpr 0x2916b10 <col:31, col:42> 'typename std::remove_reference<unique_ptr<int> &>::type':'std::unique_ptr<int>' xvalue
 | |       |-ImplicitCastExpr 0x2916af8 <col:31, col:36> 'typename std::remove_reference<unique_ptr<int> &>::type &&(*)(std::unique_ptr<int> &) noexcept' <FunctionToPointerDecay>
@@ -673,33 +672,17 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       unless(hasParent(cxxMemberCallExpr())),
       unless(hasParent(cxxOperatorCallExpr()))
   );
-  auto HandleCallExprArgument = makeRule(
-      stmt(
-        // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
-        unless(is_function_pointer),
-        ignores_for_CallExprArgument,
-        hasParent(callExpr(
-          unless(callee(functionDecl(isBuiltinFunction()))),
-          unless(hasDescendant(lambdaExpr())),
-          unless(isInMacro())
-        ))
-      ).bind("argument"),
-      {
-        insertBefore(node("argument"), cat("__trace_function_call_param((")),
-        insertAfter(node("argument"), cat("))")),
-        add_include,
-      },
-      cat("HandleCallExprArgument")
-    );
-  // auto NotWorkingHandleCallExprArgument = makeRule(
-  //     callExpr(
+  // auto HandleCallExprArgument = makeRule(
+  //     stmt(
+  //       // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
+  //       unless(is_function_pointer),
   //       ignores_for_CallExprArgument,
-  //       unless(hasDescendant(lambdaExpr())),
-  //       forEachArgumentWithParam(
-  //         expr().bind("argument"),
-  //         parmVarDecl()
-  //       )
-  //     ),
+  //       hasParent(callExpr(
+  //         unless(callee(functionDecl(isBuiltinFunction()))),
+  //         unless(hasDescendant(lambdaExpr())),
+  //         unless(isInMacro())
+  //       ))
+  //     ).bind("argument"),
   //     {
   //       insertBefore(node("argument"), cat("__trace_function_call_param((")),
   //       insertAfter(node("argument"), cat("))")),
@@ -707,7 +690,69 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   //     },
   //     cat("HandleCallExprArgument")
   //   );
+  auto HandleCallExprArgument = makeRule(
+      callExpr(
+        ignores_for_CallExprArgument,
+        forEachArgumentWithParam(
+          expr().bind("argument"),
+          parmVarDecl()
+        )
+      ).bind("callee"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param((")),
+        insertAfter(node("argument"), cat("))")),
+        insertBefore(node("callee"), cat("__trace_function_call((")),
+        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+        add_include,
+      },
+      cat("HandleCallExprArgument")
+    );
 
+/*
+| | | `-CallExpr 0x24ace68 <col:21, col:37> 'int'
+| | |   |-ImplicitCastExpr 0x24ace50 <col:21> 'int (*)(int, int)' <FunctionToPointerDecay>
+| | |   | `-DeclRefExpr 0x24acd10 <col:21> 'int (int, int)' Function 0x24abf40 'add' 'int (int, int)'
+| | |   |-CallExpr 0x24acdd0 <col:25, col:33> 'int'
+[...]
+| | |   `-IntegerLiteral 0x24ace30 <col:36> 'int' 2
+*/
+  auto HandleIntegerLiteralArgument = makeRule(
+      integerLiteral(
+        hasParent(callExpr())
+      ).bind("argument"),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param(")),
+        insertAfter(node("argument"), cat(")")),
+        add_include,
+      },
+      cat("HandleIntegerLiteralArgument")
+    );
+
+
+/* 最適化の結果定数が残るケース
+|   |   `-CallExpr 0x11a2bc0 <col:14, line:129:6> 'int'
+|   |     |-ImplicitCastExpr 0x11a2ba8 <line:125:14> 'int (*)(int)' <FunctionToPointerDecay>
+|   |     | `-DeclRefExpr 0x11a2af8 <col:14> 'int (int)' Function 0x119ead0 'f' 'int (int)'
+|   |     `-ConditionalOperator 0x11a2b78 <line:127:9, line:129:5> 'int'
+|   |       |-IntegerLiteral 0x11a2b18 <line:127:9> 'int' 0
+|   |       |-IntegerLiteral 0x11a2b38 <col:13> 'int' 1
+|   |       `-IntegerLiteral 0x11a2b58 <line:129:5> 'int' 2
+*/
+  // TODO: コンパイルが通らない
+  // auto HandleFoldableIntegerLiteralArgument = makeRule(
+  //     expr(
+  //       AbstractConditionalOperator(
+  //         hasTrueExpression(integerLiteral()),
+  //         hasFalseExpression(integerLiteral())
+  //       )
+  //     ).bind("argument"),
+  //     {
+  //       insertBefore(node("argument"), cat("__trace_function_call_param(")),
+  //       insertAfter(node("argument"), cat(")")),
+  //       add_include,
+  //     },
+  //     cat("HandleFoldableIntegerLiteralArgument")
+  //   );
 
 /* 📝 g(NULL, 3) の AST
 |   |     `-CallExpr 0x15ee820 <col:20, col:29> 'int'
@@ -719,11 +764,11 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 |   |       `-IntegerLiteral 0x15ee7a8 <bad.c:107:28> 'int' 3
 */
   auto HandleCallNullArgument = makeRule(
-      expr(parenExpr(
-        cStyleCastExpr(
+      callExpr(hasAnyArgument(
+        expr(ignoringParens(cStyleCastExpr(
           hasCastKind(CK_NullToPointer)
-        )
-      )).bind("argument"),
+        ))).bind("argument")
+      )),
       {
         insertBefore(node("argument"), cat("__trace_function_call_param(")),
         insertAfter(node("argument"), cat(")")),
@@ -864,12 +909,14 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleCxxConstructExprInitializerListsCallExprArgument = makeRule(
       cxxConstructExpr(
         hasType(qualType().bind("callee_type")),
-        hasParent(callExpr()),
+        hasParent(callExpr().bind("callee")),
         isListInitialization()
-      ).bind("callee"),
+      ).bind("argument"),
       {
-        insertBefore(node("callee"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
-        insertAfter(node("callee"), cat(")")),
+        insertBefore(node("argument"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
+        insertAfter(node("argument"), cat(")")),
+        insertBefore(node("callee"), cat("__trace_function_call((")),
+        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleCxxConstructExprInitializerListsCallExprArgument")
@@ -887,11 +934,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleInitListExprInitializerListsCallExprArgument = makeRule(
       initListExpr(
         hasType(qualType().bind("callee_type")),
-        hasParent(callExpr())
-      ).bind("callee"),
+        hasParent(callExpr().bind("callee"))
+      ).bind("argument"),
       {
-        insertBefore(node("callee"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
-        insertAfter(node("callee"), cat(")")),
+        insertBefore(node("argument"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
+        insertAfter(node("argument"), cat(")")),
+        insertBefore(node("callee"), cat("__trace_function_call((")),
+        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleInitListExprInitializerListsCallExprArgument")
@@ -1090,16 +1139,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleCallExpr,
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
-
+#endif
     HandleCxxConstructExprInitializerListsCallExprArgument,
     HandleInitListExprInitializerListsCallExprArgument,
-
-    // Match with stmt
-    HandleCallNullArgument,
-    HandleCallExprArgument, // __trace_variable_rvalue と両立しない（例：f(x, 1)）のでChekerを分けている
-
-    // HandleMacroUse,
-#endif
+    HandleCallExprArgument,
+    // HandleIntegerLiteralArgument,
+    // // HandleFoldableIntegerLiteralArgument,
+    // HandleCallNullArgument,
   });
 }
 
