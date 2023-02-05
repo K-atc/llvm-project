@@ -119,12 +119,37 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
       condition_found("HandleForStmtCondition")
     );
 
+  // TODO: チェッカーとして独立
+  auto ignores_for_callExpr = allOf(
+    unless(isInMacro()),
+    unless(isExpansionInSystemHeader()),
+    isExpansionInMainFile(),
+    unless(cxxOperatorCallExpr()),
+    unless(hasAncestor(forStmt())), // ゆるすぎるかも…
+    unless(hasAncestor(cxxForRangeStmt())),
+    unless(hasAncestor(cxxCtorInitializer()))
+  );
+  auto HandleCallExpr = makeRule(
+      callExpr(
+        ignores_for_callExpr
+      ).bind("callee"),
+      {
+        insertBefore(node("callee"), cat("__trace_function_call((")),
+        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+        add_include,
+      },
+      cat("HandleCallExpr")
+    );
+
+
   return applyFirst({
     HandleDeclStmtIfStmtCondition,
     HandleIfStmtCondition,
     // HandleBinaryOperatorIfStmtCondition,
     HandleWhileStmtCondition,
     HandleForStmtCondition,
+
+    HandleCallExpr,
   });
 }
 

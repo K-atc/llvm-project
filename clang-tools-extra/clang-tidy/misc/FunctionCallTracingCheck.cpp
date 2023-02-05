@@ -521,6 +521,21 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   //     },
   //     cat("HandleCallExpr")
   //   );
+
+  // auto HandleNoArgumentsCallExpr = makeRule(
+  //     callExpr(
+  //       ignores_for_callExpr,
+  //       argumentCountIs(0)
+  //     ).bind("callee"),
+  //     {
+  //       // NOTE: テンプレートの,がマクロの引数区切りと扱われないように、()で囲む
+  //       insertBefore(node("callee"), cat("__trace_function_call((")),
+  //       insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+  //       add_include,
+  //     },
+  //     cat("HandleNoArgumentsCallExpr")
+  //   );
+
 /*
 | |     `-CallExpr 0x2916b10 <col:31, col:42> 'typename std::remove_reference<unique_ptr<int> &>::type':'std::unique_ptr<int>' xvalue
 | |       |-ImplicitCastExpr 0x2916af8 <col:31, col:36> 'typename std::remove_reference<unique_ptr<int> &>::type &&(*)(std::unique_ptr<int> &) noexcept' <FunctionToPointerDecay>
@@ -693,16 +708,16 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   auto HandleCallExprArgument = makeRule(
       callExpr(
         ignores_for_CallExprArgument,
-        forEachArgumentWithParam(
+        forEachArgumentWithParamType(
           expr().bind("argument"),
-          parmVarDecl()
+          qualType()
         )
       ).bind("callee"),
       {
         insertBefore(node("argument"), cat("__trace_function_call_param((")),
         insertAfter(node("argument"), cat("))")),
-        insertBefore(node("callee"), cat("__trace_function_call((")),
-        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+        // insertBefore(node("callee"), cat("__trace_function_call((")),
+        // insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleCallExprArgument")
@@ -915,8 +930,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       {
         insertBefore(node("argument"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
         insertAfter(node("argument"), cat(")")),
-        insertBefore(node("callee"), cat("__trace_function_call((")),
-        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+        // insertBefore(node("callee"), cat("__trace_function_call((")),
+        // insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleCxxConstructExprInitializerListsCallExprArgument")
@@ -939,8 +954,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       {
         insertBefore(node("argument"), cat("__trace_function_call_param_with_type<", describe("callee_type") ,">(")),
         insertAfter(node("argument"), cat(")")),
-        insertBefore(node("callee"), cat("__trace_function_call((")),
-        insertAfter(node("callee"), cat("), (", node("callee"), "))")),
+        // insertBefore(node("callee"), cat("__trace_function_call((")),
+        // insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleInitListExprInitializerListsCallExprArgument")
@@ -948,7 +963,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
   auto HandleReturnStmt = makeRule(
       traverse(TK_IgnoreUnlessSpelledInSource, returnStmt(
-        // unless(hasAncestor(cxxRecordDecl())),
         hasReturnValue(expr().bind("ReturnValue"))
       )),
       {
@@ -982,7 +996,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       return_found("HandleBitFieldReturnStmt")
     );
 
-/* `return std::nullptr;`
+/* `return nullptr;`
 | `-CompoundStmt 0x12948b8 <col:44, line:34:1>
 |   `-ReturnStmt 0x12948a8 <line:33:5, col:12>
 |     `-ExprWithCleanups 0x1294890 <col:5, col:12> 'std::unique_ptr<int>':'std::unique_ptr<int>'
@@ -1140,6 +1154,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleVoidCallExpr,
     HandleUnuseReturnValueCallExpr,
 #endif
+
     HandleCxxConstructExprInitializerListsCallExprArgument,
     HandleInitListExprInitializerListsCallExprArgument,
     HandleCallExprArgument,
