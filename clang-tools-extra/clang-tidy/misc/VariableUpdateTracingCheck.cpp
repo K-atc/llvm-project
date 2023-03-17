@@ -676,7 +676,8 @@ class Rectangle {
         is_not_in_global_vardecl,
         is_not_in_array_vardecl,
         is_not_in_fielddecl,
-        is_not_in_enum
+        is_not_in_enum,
+        hasType(qualType().bind("rvalue_type"))
       )).bind("rvalue"),
       change_rvalue_const_int,
       assignment_found("HandleRvalueSizeofExpr")

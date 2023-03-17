@@ -127,7 +127,8 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
     unless(cxxOperatorCallExpr()),
     unless(hasAncestor(forStmt())), // ゆるすぎるかも…
     unless(hasAncestor(cxxForRangeStmt())),
-    unless(hasAncestor(cxxCtorInitializer()))
+    unless(hasAncestor(cxxCtorInitializer())),
+    unless(hasAncestor(decl(isImplicit())))
   );
   auto HandleCallExpr = makeRule(
       callExpr(

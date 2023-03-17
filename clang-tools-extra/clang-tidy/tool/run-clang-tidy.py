@@ -352,6 +352,9 @@ def main():
     for name in files:
       if file_name_re.search(name):
         task_queue.put(name)
+    for name in args.files:
+      if os.path.exists(name) and os.path.isfile(name):
+        task_queue.put(name)
 
     # Wait for all threads to be done.
     task_queue.join()

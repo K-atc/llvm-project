@@ -685,7 +685,8 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       unless(hasAncestor(forStmt())), // ゆるすぎるかも…
       unless(hasAncestor(cxxForRangeStmt())),
       unless(hasParent(cxxMemberCallExpr())),
-      unless(hasParent(cxxOperatorCallExpr()))
+      unless(hasParent(cxxOperatorCallExpr())),
+      unless(hasAncestor(decl(isImplicit())))
   );
   // auto HandleCallExprArgument = makeRule(
   //     stmt(
@@ -706,13 +707,14 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
   //     cat("HandleCallExprArgument")
   //   );
   auto HandleCallExprArgument = makeRule(
-      callExpr(
+      traverse(TK_IgnoreUnlessSpelledInSource, callExpr(
         ignores_for_CallExprArgument,
+        unless(cxxOperatorCallExpr()),
         forEachArgumentWithParamType(
           expr().bind("argument"),
           qualType()
         )
-      ).bind("callee"),
+      ).bind("callee")),
       {
         insertBefore(node("argument"), cat("__trace_function_call_param((")),
         insertAfter(node("argument"), cat("))")),
@@ -885,30 +887,31 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 | |     |   `-CXXThisExpr 0x2052430 <col:9> 'Array *' implicit this
 | |     `-IntegerLiteral 0x2052470 <col:27> 'int' 1
 */
-  auto HandleCalleeFunctionDeclRefExpr = makeRule(
-      // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
-      declRefExpr(
-        unless(hasAncestor(cxxCtorInitializer())),
-        unless(hasParent(
-          implicitCastExpr(
-            hasCastKind(CK_FunctionToPointerDecay),
-            hasParent(cxxOperatorCallExpr())
-          )
-        )),
-        hasAncestor(implicitCastExpr(
-          hasCastKind(CK_FunctionToPointerDecay),
-          hasParent(callExpr(
-            unless(isInMacro())
-          ))
-        ))
-      ).bind("callee"),
-      {
-        insertBefore(node("callee"), cat("__trace_function_call_param((")),
-        insertAfter(node("callee"), cat("))")),
-        add_include,
-      },
-      cat("HandleCalleeFunctionDeclRefExpr")
-    );
+  // auto HandleCalleeFunctionDeclRefExpr = makeRule(
+  //     // NOTE: なぜか implicitCastExpr() とマッチさせようとするとルールが発火しない
+  //     declRefExpr(
+  //       unless(hasAncestor(cxxCtorInitializer())),
+  //       hasAncestor(compoundStmt()),
+  //       unless(hasParent(
+  //         implicitCastExpr(
+  //           hasCastKind(CK_FunctionToPointerDecay),
+  //           hasParent(cxxOperatorCallExpr())
+  //         )
+  //       )),
+  //       hasAncestor(implicitCastExpr(
+  //         hasCastKind(CK_FunctionToPointerDecay),
+  //         hasParent(callExpr(
+  //           unless(isInMacro())
+  //         ))
+  //       ))
+  //     ).bind("callee"),
+  //     {
+  //       insertBefore(node("callee"), cat("__trace_function_call_param((")),
+  //       insertAfter(node("callee"), cat("))")),
+  //       add_include,
+  //     },
+  //     cat("HandleCalleeFunctionDeclRefExpr")
+  //   );
 
 /* add({0, 1});
 |   `-ExprWithCleanups 0x305ba48 <line:260:5, col:15> 'int'
