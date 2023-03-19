@@ -518,6 +518,13 @@ class Rectangle {
 |   |   | |       `-UnaryOperator 0x235f0b8 <col:32, col:33> 'unsigned short *' prefix '&' cannot overflow
 |   |   | |         `-DeclRefExpr 0x235f068 <col:33> 'unsigned short' lvalue Var 0x235efb0 's' 'unsigned short'
 */
+/* enum の参照
+| | `-CompoundStmt 0x1617910 <line:196:5, line:199:5>
+| |   |-BinaryOperator 0x16177c8 <line:197:9, col:16> 'ObjType' lvalue '='
+| |   | |-MemberExpr 0x1617718 <col:9> 'ObjType' lvalue ->type 0x1617188
+| |   | | `-CXXThisExpr 0x1617708 <col:9> 'Object *' implicit this
+| |   | `-DeclRefExpr 0x1617748 <col:16> 'ObjType' EnumConstant 0x1615fd0 'objBool' 'ObjType'
+*/
 /* `for (auto i : array) {}`
 |   `-CXXForRangeStmt 0x1508ec0 <line:17:5, line:19:5>
 |     |-<<<NULL>>>
@@ -585,7 +592,7 @@ class Rectangle {
         is_not_in_initlistexpr,
         is_not_increment,
         unless(is_referenced_value),
-        hasParent(implicitCastExpr(unless(hasCastKind(CK_FunctionToPointerDecay)))), // 除外(2)
+        // hasParent(implicitCastExpr(unless(hasCastKind(CK_FunctionToPointerDecay)))), // 除外(2)
         unless(hasAncestor(lambdaExpr())), // NOTE: ラムダ式 [](...){} のかっこ内は計装対象外
         child_does_not_have_record,
         unless(hasAncestor(cxxForRangeStmt())),
@@ -602,6 +609,15 @@ class Rectangle {
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
       assignment_found("HandleRvalueDeclRefExpr")
+    );
+
+  auto HandleRvalueEnumConstantDecl = makeRule(
+      declRefExpr(
+        to(enumConstantDecl()),
+        hasType(qualType().bind("rvalue_type"))
+      ).bind("rvalue"),
+      change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
+      assignment_found("HandleRvalueEnumConstantDecl")
     );
 
   // <???> = <IntegerLiteral>
@@ -1040,6 +1056,7 @@ class Rectangle {
     HandleRvalueDeclRefExpr,
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
+    HandleRvalueEnumConstantDecl,
   });
 }
 
