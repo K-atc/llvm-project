@@ -475,7 +475,7 @@ class Rectangle {
         unless(hasAncestor(memberExpr())),
         anyOf(
           capture_record_type,
-          has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
+          hasDescendant(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
         ),
         hasType(qualType().bind("lvalue_type"))
       ).bind("lvalue"));
