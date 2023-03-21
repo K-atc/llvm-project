@@ -613,6 +613,13 @@ class Rectangle {
 
   auto HandleRvalueEnumConstantDecl = makeRule(
       declRefExpr(
+        is_not_in_case,
+        is_not_in_initlistexpr,
+        is_not_in_static_vardecl,
+        is_not_in_global_vardecl,
+        is_not_in_array_vardecl,
+        is_not_in_fielddecl,
+        is_not_in_enum,
         to(enumConstantDecl()),
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
@@ -1004,13 +1011,14 @@ class Rectangle {
       assignment_found("HandleRvalueSecondLevelMemberExpr")
     );
 
+/* 除外(1): struct GfxColor { ... } */
   auto HandleRvalueReferenceExpr = makeRule(
-      unaryOperator(
+      traverse(TK_IgnoreUnlessSpelledInSource, unaryOperator(
         is_not_in_static_vardecl,
         is_not_in_const_vardecl,
         is_not_in_initlistexpr,
         hasOperatorName("&")
-      ).bind("rvalue"),
+      ).bind("rvalue")),
       {
         insertBefore(
             node("rvalue"),

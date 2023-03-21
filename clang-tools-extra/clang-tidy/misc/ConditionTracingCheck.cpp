@@ -131,9 +131,9 @@ RewriteRuleWith<std::string> ConditionTracingCheckImpl() {
     unless(hasAncestor(decl(isImplicit())))
   );
   auto HandleCallExpr = makeRule(
-      callExpr(
+      traverse(TK_IgnoreUnlessSpelledInSource, callExpr(
         ignores_for_callExpr
-      ).bind("callee"),
+      ).bind("callee")),
       {
         insertBefore(node("callee"), cat("__trace_function_call((")),
         insertAfter(node("callee"), cat("), (", node("callee"), "))")),

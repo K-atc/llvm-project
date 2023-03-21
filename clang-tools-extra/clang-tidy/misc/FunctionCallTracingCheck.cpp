@@ -130,15 +130,20 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         )
       );
     };
+  auto ignore_special_functions = allOf(
+    unless(isDefaulted()),
+    unless(isDeleted())
+  );
   auto change_paramvardecl_begin = insertBefore(node("body"), cat("{ __trace_function_call_enter(); "));
   auto change_paramvardecl_terminal = insertAfter(node("body"), cat(" __trace_void_function_return(); }"));
   auto HandleFunctionDecl0 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
         unless(hasParent(cxxRecordDecl())),
+        ignore_special_functions,
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl_terminal,
@@ -147,12 +152,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl0")
     );
   auto HandleFunctionDecl1 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -162,13 +168,14 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl1")
     );
   auto HandleFunctionDecl2 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -179,14 +186,15 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl2")
     );
   auto HandleFunctionDecl3 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -198,15 +206,16 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl3")
     );
   auto HandleFunctionDecl4 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
         capture_paramvardecl(3),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -219,16 +228,17 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl4")
     );
   auto HandleFunctionDecl5 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
         capture_paramvardecl(3),
         capture_paramvardecl(4),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -242,9 +252,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl5")
     );
   auto HandleFunctionDecl6 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -252,7 +263,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(4),
         capture_paramvardecl(5),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -267,9 +278,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl6")
     );
   auto HandleFunctionDecl7 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -278,7 +290,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(5),
         capture_paramvardecl(6),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -294,9 +306,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl7")
     );
   auto HandleFunctionDecl8 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -306,7 +319,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(6),
         capture_paramvardecl(7),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -323,9 +336,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl8")
     );
   auto HandleFunctionDecl9 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -336,7 +350,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(7),
         capture_paramvardecl(8),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -354,9 +368,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl9")
     );
   auto HandleFunctionDecl10 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -368,7 +383,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(8),
         capture_paramvardecl(9),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -387,9 +402,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl10")
     );
   auto HandleFunctionDecl11 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -402,7 +418,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(9),
         capture_paramvardecl(10),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),
@@ -422,9 +438,10 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl11")
     );
   auto HandleFunctionDecl12 = makeRule(
-      functionDecl(
+      traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
         capture_paramvardecl(0),
         capture_paramvardecl(1),
         capture_paramvardecl(2),
@@ -438,7 +455,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
         capture_paramvardecl(10),
         capture_paramvardecl(11),
         capture_body
-      ),
+      )),
       {
         change_paramvardecl_begin,
         change_paramvardecl(0),

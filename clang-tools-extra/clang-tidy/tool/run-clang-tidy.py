@@ -333,6 +333,7 @@ def main():
 
   # Build up a big regexy filter from all command line arguments.
   file_name_re = re.compile('|'.join(args.files))
+  print("[*] file_name_re = {}".format(file_name_re), file=sys.stderr)
 
   return_code = 0
   try:
