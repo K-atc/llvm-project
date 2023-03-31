@@ -65,7 +65,9 @@ AST_MATCHER(VarDecl, hasAlignedAttr) {
   return Node.hasAttr<AlignedAttr>();
 }
 
-
+AST_MATCHER(CXXMethodDecl, isStatic) {
+  return Node.isStatic();
+}
 
 } // namespace clang
 } // namespace ast_matchers
@@ -80,8 +82,7 @@ using namespace ::clang::transformer;
 RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
   std::cerr << "[*] VariableUpdateTracingCheckImpl" << std::endl;
 
-  auto declaration_found = [](auto rule_name) { return cat("Variable declaration found 📢 (", rule_name, ")"); };
-  auto assignment_found = [](auto rule_name) { return cat("Assignment found 🎉 (", rule_name, ")"); };
+  auto tell_matched_rule = [](auto rule_name) { return cat("Matched rule ", rule_name); };
 
 /*
 |   `-ReturnStmt 0x24378d8 <line:194:5, col:12>
@@ -266,7 +267,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      declaration_found("HandleRvalueArraySubscriptExpr")
+      tell_matched_rule("HandleRvalueArraySubscriptExpr")
     );
 
   auto HandleRvalueMemberExprArraySubscriptExpr = makeRule(
@@ -289,7 +290,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      declaration_found("HandleRvalueMemberExprArraySubscriptExpr")
+      tell_matched_rule("HandleRvalueMemberExprArraySubscriptExpr")
     );
 
 /*
@@ -324,7 +325,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      declaration_found("HandleLvalueArraySubscriptExpr")
+      tell_matched_rule("HandleLvalueArraySubscriptExpr")
     );
 
   auto HandleLvalueMemberExprArraySubscriptExpr = makeRule(
@@ -350,7 +351,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      declaration_found("HandleLvalueMemberExprArraySubscriptExpr")
+      tell_matched_rule("HandleLvalueMemberExprArraySubscriptExpr")
     );
 
   // <VarDecl <CallExpr>>
@@ -383,7 +384,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      declaration_found("HandleVarDecl")
+      tell_matched_rule("HandleVarDecl")
     );
 
   // <AssignOperator <DeclRefExpr> <???>>
@@ -426,7 +427,7 @@ RewriteRuleWith<std::string> VariableUpdateTracingCheckImpl() {
         ),
         add_include,
       },
-      assignment_found("HandleLvalueDeclRefExpr")
+      tell_matched_rule("HandleLvalueDeclRefExpr")
     );
 
   // <MemberExpr> = <???>
@@ -499,12 +500,12 @@ class Rectangle {
           node("lvalue"),
           cat(", ", node("lvalue"), ", (", describe("lvalue_type"), "), ", selectBound({
             { "record", cat(node("record"), ", (", name("record_type")) }, 
-            { "class", cat(node("class"), ", (", describe("class_type")) }
+            { "class", cat(describe("class"), ", (", describe("class_type")) }
           }), "))")
         ),
         add_include,
       },
-      assignment_found("HandleLvalueMemberExpr")
+      tell_matched_rule("HandleLvalueMemberExpr")
     );
 
 /*
@@ -608,7 +609,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueDeclRefExpr")
+      tell_matched_rule("HandleRvalueDeclRefExpr")
     );
 
   auto HandleRvalueEnumConstantDecl = makeRule(
@@ -624,7 +625,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueEnumConstantDecl")
+      tell_matched_rule("HandleRvalueEnumConstantDecl")
     );
 
   // <???> = <IntegerLiteral>
@@ -688,7 +689,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue")),
       change_rvalue_const_int,
-      assignment_found("HandleRvalueIntegerLiteral")
+      tell_matched_rule("HandleRvalueIntegerLiteral")
     );
     
   auto HandleRvalueSizeofExpr = makeRule(
@@ -703,7 +704,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       )).bind("rvalue"),
       change_rvalue_const_int,
-      assignment_found("HandleRvalueSizeofExpr")
+      tell_matched_rule("HandleRvalueSizeofExpr")
     );
 
 /*
@@ -723,7 +724,7 @@ class Rectangle {
         )
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueStringLiteral")
+      tell_matched_rule("HandleRvalueStringLiteral")
     );
 
 /*
@@ -760,7 +761,7 @@ class Rectangle {
         ),
         add_include,
       },
-      assignment_found("HandleRvalueNull")
+      tell_matched_rule("HandleRvalueNull")
     );
 
 /*
@@ -781,7 +782,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueCXXThisExpr")
+      tell_matched_rule("HandleRvalueCXXThisExpr")
   );
 
 /*
@@ -800,7 +801,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueCXXNullPtrLiteralExpr")
+      tell_matched_rule("HandleRvalueCXXNullPtrLiteralExpr")
   );
 
 /*
@@ -818,7 +819,7 @@ class Rectangle {
         hasType(qualType().bind("rvalue_type"))
       ).bind("rvalue"),
       change_variable("__trace_variable_rvalue", "rvalue", "rvalue_type"),
-      assignment_found("HandleRvalueCXXBoolLiteralExpr")
+      tell_matched_rule("HandleRvalueCXXBoolLiteralExpr")
   );
 
   // <DeclRefExpr>++
@@ -939,12 +940,12 @@ class Rectangle {
           node("rvalue"),
           cat(", ", node("rvalue"), ", (", describe("rvalue_type"), "), ", selectBound({
             { "record", cat(node("record"), ", (", name("record_type")) }, 
-            { "class", cat(node("class"), ", (", describe("class_type")) }
+            { "class", cat(describe("class"), ", (", describe("class_type")) }
           }), "))")
         ),
         add_include,
       },
-      assignment_found("HandleRvalueFirstLevelMemberExpr")
+      tell_matched_rule("HandleRvalueFirstLevelMemberExpr")
     );
 
   auto HandleRvalueFirstAndSecondLevelMemberExpr = makeRule(
@@ -978,7 +979,7 @@ class Rectangle {
         ),
         add_include,
       },
-      assignment_found("HandleRvalueFirstAndSecondLevelMemberExpr")
+      tell_matched_rule("HandleRvalueFirstAndSecondLevelMemberExpr")
     );
 
   auto HandleRvalueSecondLevelMemberExpr = makeRule(
@@ -1008,7 +1009,7 @@ class Rectangle {
         ),
         add_include,
       },
-      assignment_found("HandleRvalueSecondLevelMemberExpr")
+      tell_matched_rule("HandleRvalueSecondLevelMemberExpr")
     );
 
 /* 除外(1): struct GfxColor { ... } */
@@ -1030,7 +1031,36 @@ class Rectangle {
           ),
         add_include,
       },
-      assignment_found("HandleRvalueReferenceExpr")
+      tell_matched_rule("HandleRvalueReferenceExpr")
+    );
+
+  auto capture_non_blank_compoundStmt = compoundStmt(unless(statementCountIs(0))).bind("body");
+  auto InsertDefThis = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, decl(
+        anyOf(
+          cxxConstructorDecl(
+            ofClass(recordDecl().bind("name")),
+            hasBody(capture_non_blank_compoundStmt)
+          ),
+          cxxMethodDecl(
+            ofClass(recordDecl().bind("name")),
+            unless(isStatic()),
+            hasBody(capture_non_blank_compoundStmt)
+          )
+        )
+      )),
+      {
+        insertBefore(
+          node("body"),
+          cat("{ __trace_def(this, ", name("name"), "); ")
+        ),
+        insertAfter(
+          node("body"),
+          cat("}")
+        ),
+        add_include,
+      },
+      tell_matched_rule("InsertDefThis")
     );
 
   return applyFirst({
@@ -1065,6 +1095,8 @@ class Rectangle {
     HandleRvalueIntegerLiteral,
     HandleRvalueStringLiteral,
     HandleRvalueEnumConstantDecl,
+
+    InsertDefThis,
   });
 }
 
