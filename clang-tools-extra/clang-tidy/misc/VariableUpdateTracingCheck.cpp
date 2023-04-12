@@ -927,8 +927,8 @@ class Rectangle {
         unless(hasParent(cxxMemberCallExpr())),
         member(valueDecl(hasType(qualType().bind("rvalue_type")))),
         anyOf(
-          capture_record_type,
-          has(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class"))
+          hasDescendant(cxxThisExpr(hasType(qualType().bind("class_type"))).bind("class")),
+          capture_record_type
         )
       ).bind("rvalue"),
       {
@@ -964,6 +964,7 @@ class Rectangle {
         // NOTE: has() で囲わないと、Top LevelのmemberExprとマッチしてしまう
         has(ignoringParenImpCasts(
           memberExpr(
+            unless(hasDescendant(cxxThisExpr())),
             member(fieldDecl(hasTypeLoc(typeLoc().bind("parent_type"))))
           ).bind("parent")
         ))
