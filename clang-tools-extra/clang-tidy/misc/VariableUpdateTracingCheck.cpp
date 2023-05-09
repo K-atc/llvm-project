@@ -14,7 +14,7 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Transformer/RangeSelector.h" // node("hoge"), name("hoge")
 #include "clang/Tooling/Transformer/RewriteRule.h" // changeTo(), addInclude()
-#include "clang/Tooling/Transformer/Stencil.h"
+#include "clang/Tooling/Transformer/Stencil.h" // ifBound(), selectBound()
 #include "llvm/ADT/StringRef.h"
 
 #include <iostream>
@@ -682,6 +682,7 @@ class Rectangle {
           hasParent(explicitCastExpr()),
           hasParent(implicitCastExpr()),
           hasParent(arraySubscriptExpr()),
+          hasParent(cxxConstructExpr()),
           hasParent(callExpr()),
           hasParent(returnStmt()),
           hasParent(binaryOperator())
@@ -1040,20 +1041,31 @@ class Rectangle {
       traverse(TK_IgnoreUnlessSpelledInSource, decl(
         anyOf(
           cxxConstructorDecl(
-            ofClass(recordDecl().bind("name")),
-            hasBody(capture_non_blank_compoundStmt)
+            hasBody(capture_non_blank_compoundStmt),
+            ofClass(recordDecl().bind("name"))
           ),
           cxxMethodDecl(
-            ofClass(recordDecl().bind("name")),
+            isConst(),
             unless(isStatic()),
-            hasBody(capture_non_blank_compoundStmt)
+            hasBody(capture_non_blank_compoundStmt),
+            ofClass(recordDecl().bind("name"))
+          ).bind("const_decl"),
+          cxxMethodDecl(
+            unless(isStatic()),
+            hasBody(capture_non_blank_compoundStmt),
+            ofClass(recordDecl().bind("name"))
           )
         )
       )),
       {
         insertBefore(
           node("body"),
-          cat("{ __trace_def(this, ", name("name"), "); ")
+          cat(
+            "{ __trace_def(this, ",
+            ifBound("const_decl", "(const ", "("),
+            name("name"), 
+            " *)); "
+          )
         ),
         insertAfter(
           node("body"),

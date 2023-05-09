@@ -89,12 +89,11 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 | | | `-ParmVarDecl 0x164e378 <col:8> col:8 'const tiffis_data &'
 [...]
 */
-  // TODO: コンストラクタのトレース
-  auto HandleCXXConstructorDecl = makeRule(
-    cxxConstructorDecl(),
-    add_include, // Do nothing
-    function_found("HandleCXXConstructorDecl")
-  );
+  // auto HandleCXXConstructorDecl = makeRule(
+  //   cxxConstructorDecl(),
+  //   add_include, // Do nothing
+  //   function_found("HandleCXXConstructorDecl")
+  // );
 
   auto HandleDefaultedCXXDestructorDecl = makeRule(
     cxxDestructorDecl(isDefaulted()),
@@ -140,7 +139,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       traverse(TK_IgnoreUnlessSpelledInSource, functionDecl(
         isExpansionInMainFile(),
         unless(isExpansionInSystemHeader()),
-        unless(hasParent(cxxRecordDecl())),
         ignore_special_functions,
         capture_body
       )),
@@ -476,6 +474,97 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       function_found("HandleFunctionDecl12")
     );
 
+  auto HandleCXXConstructorDecl0 = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructorDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
+        capture_body
+      )),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleCXXConstructorDecl0")
+    );
+  auto HandleCXXConstructorDecl1 = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructorDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
+        capture_paramvardecl(0),
+        capture_body
+      )),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleCXXConstructorDecl1")
+    );
+  auto HandleCXXConstructorDecl2 = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructorDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_body
+      )),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleCXXConstructorDecl2")
+    );
+  auto HandleCXXConstructorDecl3 = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructorDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_body
+      )),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleCXXConstructorDecl3")
+    );
+  auto HandleCXXConstructorDecl4 = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructorDecl(
+        isExpansionInMainFile(),
+        unless(isExpansionInSystemHeader()),
+        ignore_special_functions,
+        capture_paramvardecl(0),
+        capture_paramvardecl(1),
+        capture_paramvardecl(2),
+        capture_paramvardecl(3),
+        capture_body
+      )),
+      {
+        change_paramvardecl_begin,
+        change_paramvardecl(0),
+        change_paramvardecl(1),
+        change_paramvardecl(2),
+        change_paramvardecl(3),
+        change_paramvardecl_terminal,
+        add_include,
+      },
+      function_found("HandleCXXConstructorDecl4")
+    );
+
   // 関数呼び出しの呼び出し元と呼び出し先の値のマッチング
   // <CallExpr>
 /*
@@ -705,24 +794,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       unless(hasParent(cxxOperatorCallExpr())),
       unless(hasAncestor(decl(isImplicit())))
   );
-  // auto HandleCallExprArgument = makeRule(
-  //     stmt(
-  //       // NOTE: HandleCalleeFunctionDeclRefExpr との重複適用に注意
-  //       unless(is_function_pointer),
-  //       ignores_for_CallExprArgument,
-  //       hasParent(callExpr(
-  //         unless(callee(functionDecl(isBuiltinFunction()))),
-  //         unless(hasDescendant(lambdaExpr())),
-  //         unless(isInMacro())
-  //       ))
-  //     ).bind("argument"),
-  //     {
-  //       insertBefore(node("argument"), cat("__trace_function_call_param((")),
-  //       insertAfter(node("argument"), cat("))")),
-  //       add_include,
-  //     },
-  //     cat("HandleCallExprArgument")
-  //   );
   auto HandleCallExprArgument = makeRule(
       traverse(TK_IgnoreUnlessSpelledInSource, callExpr(
         ignores_for_CallExprArgument,
@@ -735,11 +806,24 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
       {
         insertBefore(node("argument"), cat("__trace_function_call_param((")),
         insertAfter(node("argument"), cat("))")),
-        // insertBefore(node("callee"), cat("__trace_function_call((")),
-        // insertAfter(node("callee"), cat("), (", node("callee"), "))")),
         add_include,
       },
       cat("HandleCallExprArgument")
+    );
+
+  auto HandleCXXConstructExprArgument = makeRule(
+      traverse(TK_IgnoreUnlessSpelledInSource, cxxConstructExpr(
+        forEachArgumentWithParamType(
+          expr().bind("argument"),
+          qualType()
+        )
+      ).bind("callee")),
+      {
+        insertBefore(node("argument"), cat("__trace_function_call_param((")),
+        insertAfter(node("argument"), cat("))")),
+        add_include,
+      },
+      cat("HandleCXXConstructExprArgument")
     );
 
 /*
@@ -1136,9 +1220,6 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     );
 
   return applyFirst({
-    HandleCXXConstructorDecl,
-    HandleDefaultedCXXDestructorDecl,
-
     HandleFunctionDecl12,
     HandleFunctionDecl11,
     HandleFunctionDecl10,
@@ -1152,6 +1233,13 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
     HandleFunctionDecl2,
     HandleFunctionDecl1,
     HandleFunctionDecl0,
+
+    HandleDefaultedCXXDestructorDecl,
+    HandleCXXConstructorDecl4,
+    HandleCXXConstructorDecl3,
+    HandleCXXConstructorDecl2,
+    HandleCXXConstructorDecl1,
+    HandleCXXConstructorDecl0,
 
 #if DISABLE
     // Match with ReturnStmt
@@ -1177,6 +1265,7 @@ RewriteRuleWith<std::string> FunctionCallTracingCheckImpl() {
 
     HandleCxxConstructExprInitializerListsCallExprArgument,
     HandleInitListExprInitializerListsCallExprArgument,
+    HandleCXXConstructExprArgument,
     HandleCallExprArgument,
     // HandleIntegerLiteralArgument,
     // // HandleFoldableIntegerLiteralArgument,
